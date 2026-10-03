@@ -1,0 +1,3 @@
+# Optional: requires a separately running bgutil HTTP provider of matching version.
+-r requirements.txt
+bgutil-ytdlp-pot-provider==2.0.1

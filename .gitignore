@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+backend/.venv/
+backend/downloads/
+.pytest_cache/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Local backups, test evidence and optional third-party runtimes
+/.local/
+/.vscode/
+
+# Local configuration and runtime artifacts
+.env
+.env.*
+!.env.example
+*.log
+*.tsbuildinfo
+.DS_Store
+Thumbs.db
