@@ -466,7 +466,7 @@ def test_invalid_upstream_file_fails_task_and_removes_empty_directory(mock_upstr
     assert not (isolated_tasks / created.json()["task_id"]).exists()
 
 
-@pytest.mark.parametrize("url", ["https://www.bilibili.com/video/BV1example", "https://www.youtube.com/watch?v=example"])
+@pytest.mark.parametrize("url", ["https://example.org/video", "https://www.youtube.com/watch?v=example"])
 def test_other_platforms_still_parse_and_download_with_ytdlp(url, monkeypatch, isolated_tasks):
     calls = []
 

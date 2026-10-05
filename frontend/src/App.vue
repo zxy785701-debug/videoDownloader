@@ -10,6 +10,7 @@ import HelpPanel from './components/HelpPanel.vue'
 import StartGuide from './components/StartGuide.vue'
 import ResultDialog from './components/ResultDialog.vue'
 import { motionDuration } from './ui/motion'
+import LearningWorkspace from './learning/LearningWorkspace.vue'
 
 type DeliveryMode = 'auto' | 'server' | 'redirect'
 type TaskStatus = 'pending' | 'processing' | 'ready' | 'failed'
@@ -62,6 +63,29 @@ function updateWideScreen(event: MediaQueryListEvent) {
 }
 wideScreenQuery.addEventListener('change', updateWideScreen)
 const resultOpen = ref(false)
+const learningOpen = ref(window.location.hash.startsWith('#learn'))
+const learningSeedUrl = ref('')
+function openLearning(sourceUrl = '') {
+  learningSeedUrl.value = sourceUrl || parsedUrl.value || url.value
+  resultOpen.value = false
+  learningOpen.value = true
+  window.location.hash = 'learn'
+}
+function closeLearning() {
+  learningOpen.value = false
+  window.location.hash = 'top'
+}
+function downloadFromLearning(sourceUrl: string) {
+  if (isParsing.value || isStartingDownload.value || isTaskRunning.value) return
+  url.value = sourceUrl
+  closeLearning()
+  void parseVideo()
+}
+function followHash() {
+  learningOpen.value = window.location.hash.startsWith('#learn')
+  if (learningOpen.value) resultOpen.value = false
+}
+window.addEventListener('hashchange', followHash)
 const platformsHighlighted = ref(false)
 let platformFeedbackTimer: number | undefined
 const selectedFormatLabel = computed(() => parsedVideo.value?.formats.find(format => format.format_id === selectedFormat.value)?.label ?? '最佳画质')
@@ -219,7 +243,7 @@ function fillExample() {
   helpOpen.value = false
 }
 
-watch(parsedVideo, video => { resultOpen.value = Boolean(video) })
+watch(parsedVideo, video => { if (!learningOpen.value) resultOpen.value = Boolean(video) })
 
 function openHelp() {
   helpOpen.value = !helpOpen.value
@@ -234,6 +258,7 @@ function highlightPlatforms() {
 }
 
 onBeforeUnmount(() => {
+  window.removeEventListener('hashchange', followHash)
   if (pollTimer) window.clearTimeout(pollTimer)
   window.clearTimeout(platformFeedbackTimer)
   wideScreenQuery.removeEventListener('change', updateWideScreen)
@@ -241,11 +266,11 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex h-dvh flex-col overflow-hidden">
+  <div v-show="!learningOpen" class="flex h-dvh flex-col overflow-hidden">
     <header class="shrink-0 border-b border-line bg-surface px-4 md:px-8">
       <div class="home-header mx-auto flex h-header w-full max-w-topbar items-center justify-between gap-2 md:grid md:grid-cols-navigation md:gap-4">
         <a href="#top" class="flex min-h-touch items-center gap-2 justify-self-start whitespace-nowrap rounded-control text-input font-semibold text-ink" aria-label="SaveAny 首页"><span class="grid size-logo place-items-center rounded-control bg-primary text-on-primary"><CirclePlay class="size-indicator" aria-hidden="true" /></span><span>SaveAny</span><span class="hidden rounded-pill bg-subtle px-2 text-caption font-normal text-muted lg:inline">视频下载工具</span></a>
-        <nav class="flex items-center gap-0 whitespace-nowrap md:gap-2" aria-label="页面导航"><button class="nav-link" type="button" :aria-expanded="helpOpen" aria-controls="guide" @click="openHelp"><BookOpen class="hidden size-icon md:block" aria-hidden="true" /><span>{{ helpOpen ? '收起帮助' : '使用方法' }}</span></button><button class="nav-link" type="button" aria-controls="supported-platforms" @click="highlightPlatforms"><Globe class="hidden size-icon md:block" aria-hidden="true" />支持平台</button></nav>
+        <nav class="flex items-center gap-0 whitespace-nowrap md:gap-2" aria-label="页面导航"><button class="nav-link" type="button" @click="openLearning()">AI 学习</button><button class="nav-link" type="button" :aria-expanded="helpOpen" aria-controls="guide" @click="openHelp"><BookOpen class="hidden size-icon md:block" aria-hidden="true" /><span>{{ helpOpen ? '收起帮助' : '使用方法' }}</span></button><button class="nav-link" type="button" aria-controls="supported-platforms" @click="highlightPlatforms"><Globe class="hidden size-icon md:block" aria-hidden="true" />支持平台</button></nav>
         <button class="quiet-button hidden justify-self-end whitespace-nowrap rounded-pill bg-primary-soft px-4 text-primary-hover md:inline-flex" type="button" :aria-expanded="helpOpen" aria-controls="guide" @click="openHelp">{{ helpOpen ? '收起帮助' : '使用帮助' }}</button>
       </div>
     </header>
@@ -276,13 +301,14 @@ onBeforeUnmount(() => {
 
     <ResultDialog :open="resultOpen && !!parsedVideo" @close="resultOpen = false">
       <VideoResult v-if="parsedVideo" :video="parsedVideo" v-model:format-id="selectedFormat" v-model:mode="deliveryMode" :modes="availableModes" :mode-label="currentModeLabel" :thumbnail-failed="thumbnailFailed" :busy="isStartingDownload || isTaskRunning" :format-duration="formatDuration" :format-size="formatSize" @thumbnail-error="thumbnailFailed = true" @reset="resetResult">
-        <template #download><DownloadAction :task="task" :starting="isStartingDownload" :running="isTaskRunning" :progress="progressValue" :download-url="downloadUrl" :error-message="errorOrigin === 'download' ? errorMessage : ''" :selection="selectedFormatLabel" @start="startDownload" @dismiss="errorMessage = ''" /></template>
+        <template #download><DownloadAction :task="task" :starting="isStartingDownload" :running="isTaskRunning" :progress="progressValue" :download-url="downloadUrl" :error-message="errorOrigin === 'download' ? errorMessage : ''" :selection="selectedFormatLabel" @start="startDownload" @dismiss="errorMessage = ''" /><div class="border-t border-line px-4 py-2 text-center"><button class="quiet-button text-primary-hover" type="button" @click="openLearning(parsedUrl)">获取字幕与 AI 总结</button></div></template>
       </VideoResult>
     </ResultDialog>
-    <ResultDialog :open="!!errorMessage && errorOrigin === 'input'" @close="errorMessage = ''"><template #title>解析未完成</template><div class="p-4 md:p-6"><RequestError v-if="errorMessage && errorOrigin === 'input'" id="input-error" :message="errorMessage" context="input" :busy="isParsing || isStartingDownload || isTaskRunning" @dismiss="errorMessage = ''" @retry="parseVideo" /></div></ResultDialog>
+    <ResultDialog :open="!learningOpen && !!errorMessage && errorOrigin === 'input'" @close="errorMessage = ''"><template #title>解析未完成</template><div class="p-4 md:p-6"><RequestError v-if="errorMessage && errorOrigin === 'input'" id="input-error" :message="errorMessage" context="input" :busy="isParsing || isStartingDownload || isTaskRunning" @dismiss="errorMessage = ''" @retry="parseVideo" /></div></ResultDialog>
 
     <footer class="w-full shrink-0 px-4 md:px-8">
       <div class="home-footer mx-auto flex min-h-footer w-full max-w-workspace items-center justify-center border-t border-line text-center text-caption text-muted"><p>仅保存你拥有版权或已获授权的内容。</p></div>
     </footer>
   </div>
+  <LearningWorkspace v-if="learningOpen" :initial-url="learningSeedUrl" :download-busy="isParsing || isStartingDownload || isTaskRunning" @close="closeLearning" @download="downloadFromLearning" />
 </template>

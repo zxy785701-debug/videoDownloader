@@ -6,6 +6,7 @@ import shutil
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -13,7 +14,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 from fastapi import HTTPException
 from yt_dlp import YoutubeDL
 
-from . import douyin
+from . import douyin, platform_adapters
 from .schemas import ParseResponse, VideoFormat
 from .security import validate_public_http_url
 
@@ -153,6 +154,8 @@ def _video_options(*, source_url: str | None = None, **extra) -> dict:
 
 
 def friendly_error(error: Exception) -> str:
+    if isinstance(error, platform_adapters.PlatformError):
+        return str(error)
     if isinstance(error, douyin.DouyinError):
         return str(error)
     message = str(error).casefold().replace("’", "'")
@@ -190,6 +193,8 @@ def friendly_error(error: Exception) -> str:
 
 
 def download_error(error: Exception) -> str:
+    if isinstance(error, platform_adapters.PlatformError):
+        return str(error)
     if isinstance(error, douyin.DouyinError):
         return str(error)
     if error_category(error) != "unknown":
@@ -248,6 +253,8 @@ def _format_choices(info: dict) -> list[VideoFormat]:
         if format_id in seen:
             continue
         label_parts = [resolution, ext.upper() if ext else None]
+        if info.get("extractor_key") in {"MangoTV", "MGTV"}:
+            label_parts.insert(1, item.get("format_note"))
         if is_video_only:
             label_parts.append("自动合并音频")
             seen_video_resolutions.add(resolution_key)
@@ -268,6 +275,16 @@ def _format_choices(info: dict) -> list[VideoFormat]:
     return choices
 
 
+@contextmanager
+def _open_video_downloader(url: str, options: dict):
+    if platform_adapters.platform_for(url):
+        with platform_adapters.open_downloader(url, options) as ydl:
+            yield ydl
+    else:
+        with YoutubeDL(options) as ydl:
+            yield ydl
+
+
 def parse_video(url: str) -> ParseResponse:
     safe_url = validate_public_http_url(url)
     if douyin.is_douyin_url(safe_url):
@@ -285,9 +302,9 @@ def parse_video(url: str) -> ParseResponse:
             duration=video.duration,
             formats=[VideoFormat(format_id="best", label="原始视频 · MP4", ext="mp4", resolution=video.resolution)],
         )
-    with YoutubeDL(_video_options(source_url=safe_url, skip_download=True)) as ydl:
+    with _open_video_downloader(safe_url, _video_options(source_url=safe_url, skip_download=True)) as ydl:
         info = ydl.extract_info(safe_url, download=False)
-    if not info or info.get("_type") == "playlist":
+    if not info or info.get("_type") == "playlist" or (platform_adapters.platform_for(safe_url) and info.get("_type") == "multi_video"):
         raise ValueError("Playlists are not supported in this version")
     thumbnail = None
     if info.get("thumbnail"):
@@ -356,11 +373,19 @@ def process_download(task_id: str, url: str, format_id: str, delivery_mode: str)
             if delivery_mode == "redirect":
                 raise ValueError("YouTube 请使用自动或服务端下载，以支持会话和音视频合并")
             delivery_mode = "server"
+        platform = platform_adapters.platform_for(safe_url)
+        if platform:
+            if delivery_mode == "redirect":
+                raise platform_adapters.PlatformError("SERVER_REQUIRED", "B 站和芒果 TV 请使用自动或服务端下载，以处理登录会话、备用地址与音视频校验。")
+            delivery_mode = "server"
         selected_format = _safe_format_id(format_id)
+        if platform and format_id.startswith("video:"):
+            # An explicitly selected resolution must not silently become another quality.
+            selected_format = selected_format.removesuffix("/best")
         resolved_info = None
         direct_url = None
         if delivery_mode in {"auto", "redirect"}:
-            with YoutubeDL(_video_options(source_url=safe_url, format=selected_format, skip_download=True)) as ydl:
+            with _open_video_downloader(safe_url, _video_options(source_url=safe_url, format=selected_format, skip_download=True)) as ydl:
                 resolved_info = ydl.extract_info(safe_url, download=False)
             direct_url = _direct_url(resolved_info or {})
 
@@ -389,13 +414,28 @@ def process_download(task_id: str, url: str, format_id: str, delivery_mode: str)
         ffmpeg_location = _ffmpeg_location()
         if ffmpeg_location:
             options["ffmpeg_location"] = ffmpeg_location
-        with YoutubeDL(options) as ydl:
-            ydl.download([safe_url])
+        if platform and not ffmpeg_location:
+            raise platform_adapters.PlatformError("FFMPEG_MISSING", "此视频需要 FFmpeg 合并或校验音视频，请检查后端配置。")
+        expected_duration = None
+        with _open_video_downloader(safe_url, options) as ydl:
+            if platform:
+                info = ydl.extract_info(safe_url, download=False, process=False)
+                if info and info.get("_type") in {"url", "url_transparent"}:
+                    info = ydl.process_ie_result(info, download=False)
+                if not info or info.get("_type") in {"playlist", "multi_video", "url", "url_transparent"}:
+                    raise platform_adapters.PlatformError("NOT_SINGLE_VIDEO", "此链接未返回可校验的单个视频，请使用直接视频链接。")
+                expected_duration = float(info.get("_platform_expected_duration") or info.get("duration") or 0)
+                ydl.process_ie_result(info, download=True)
+            else:
+                ydl.download([safe_url])
 
-        files = [path for path in task_directory.iterdir() if path.is_file() and not path.name.endswith(".part")]
+        files = [path for path in task_directory.iterdir() if path.is_file() and not path.name.endswith(".part")
+                 and (not platform or path.suffix.lower() in {".mp4", ".mkv", ".webm", ".flv", ".ts"})]
         if not files:
             raise RuntimeError("yt-dlp completed without producing a file")
         file_path = max(files, key=lambda path: path.stat().st_size)
+        if platform:
+            platform_adapters.verify_media(ffmpeg_location, file_path, expected_duration)
         _set_state(
             task_id,
             status="ready",

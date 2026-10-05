@@ -1,25 +1,49 @@
 import logging
 import secrets
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from . import video_service
+from .analysis_errors import AnalysisError
+from .analysis_jobs import close_engine, get_engine
+from .analysis_routes import router as analysis_router
 from .schemas import DownloadCreated, DownloadRequest, DownloadStatus, ParseRequest, ParseResponse
 
 logging.basicConfig(level=logging.INFO)
-app = FastAPI(title="Video Downloader API", version="0.1.0")
+@asynccontextmanager
+async def lifespan(app):
+    try:
+        await run_in_threadpool(get_engine)
+    except AnalysisError as error:
+        logging.warning("Learning storage unavailable code=%s", error.code)
+    try:
+        yield
+    finally:
+        await run_in_threadpool(close_engine)
+
+
+app = FastAPI(title="Video Downloader API", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["Content-Type"],
 )
+
+
+@app.exception_handler(AnalysisError)
+async def analysis_error_handler(request, error: AnalysisError):
+    return JSONResponse(status_code=error.status_code, content={"detail": {"code": error.code, "message": error.message}})
+
+
+app.include_router(analysis_router)
 
 
 @app.get("/api/v1/health")
