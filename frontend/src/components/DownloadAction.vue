@@ -48,7 +48,7 @@ const buttonLabel = computed(() => {
 
 <template>
   <div class="contents">
-    <Transition name="rise"><RequestError v-if="errorMessage" class="mx-4 mb-4 md:mx-6" :message="errorMessage" context="download" :busy="busy" @dismiss="emit('dismiss')" @retry="emit('start')" /></Transition>
+    <Transition name="rise"><RequestError v-if="errorMessage" class="mx-4 mb-4 md:mx-6" :message="errorMessage" context="download" :busy="busy" auto-recover @dismiss="emit('dismiss')" @retry="emit('start')" /></Transition>
     <div class="min-h-download-bar rounded-b-panel bg-surface p-4 md:px-8 md:pb-8">
       <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
         <div class="min-w-0 flex-1 sm:order-2" aria-live="polite">

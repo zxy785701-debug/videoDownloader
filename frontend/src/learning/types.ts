@@ -19,6 +19,6 @@ export interface SummaryVersion { id: string; model: string; prompt_version: str
 export interface SummaryResponse { status: string; summary: SummaryVersion | null; usage: Usage }
 export interface Answer { answer: string; cue_ids: string[]; evidence: 'supported' | 'insufficient'; references: Reference[] }
 export interface Message { id: string; question: string; answer: Answer | null; status: string; error: string | null; error_code: string | null }
-export interface AIConfig { configured: boolean; model: string; max_duration: number; max_characters: number; firefox_subtitle_session: boolean }
+export interface AIConfig { configured: boolean; model: string; max_duration: number; max_characters: number; firefox_subtitle_session: boolean; summary_stream_version?: number; auto_summary_version?: number }
 export interface Page<T> { items: T[]; total: number }
 export interface TranscriptPage extends Page<Cue> { offset: number; limit: number }

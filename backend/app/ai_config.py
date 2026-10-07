@@ -67,6 +67,8 @@ class AIConfig:
             "request_timeout": self.request_timeout,
             "summary_timeout": self.summary_timeout,
             "firefox_subtitle_session": self.firefox_subtitle_session,
+            "summary_stream_version": 2,
+            "auto_summary_version": 1,
         }
 
 

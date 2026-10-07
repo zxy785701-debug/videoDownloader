@@ -6,15 +6,18 @@ from pydantic import BaseModel, ConfigDict, Field
 class AnalysisCreate(BaseModel):
     url: str = Field(min_length=8, max_length=2048)
     language: str = Field(default="auto", min_length=1, max_length=40, pattern=r"^[\w-]+$")
+    auto_summary: bool = False
 
 
 class SummaryCreate(BaseModel):
     force: bool = False
+    stream: bool = False
 
 
 class ChatCreate(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     request_id: str = Field(min_length=8, max_length=100, pattern=r"^[A-Za-z0-9_.-]+$")
+    stream: bool = False
 
 
 class Point(BaseModel):

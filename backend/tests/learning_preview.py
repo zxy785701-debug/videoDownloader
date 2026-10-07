@@ -64,6 +64,18 @@ def model_response(request):
                  "points": [{"text": "先回想概念，再用例子检验，发现理解漏洞。", "cue_ids": ["c000150"]}]},
             ],
         }
+    if payload.get("stream"):
+        class AnswerStream(httpx.SyncByteStream):
+            def __iter__(self):
+                text = json.dumps(answer, ensure_ascii=False)
+                for offset in range(0, len(text), 6):
+                    time.sleep(0.035)
+                    chunk = {"choices": [{"index": 0, "delta": {"content": text[offset:offset + 6]}, "finish_reason": None}]}
+                    yield ("data: " + json.dumps(chunk, ensure_ascii=False) + "\n\n").encode("utf-8")
+                yield ("data: " + json.dumps({"choices": [{"delta": {}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 100, "completion_tokens": 80, "prompt_cache_hit_tokens": 20}}) + "\n\n").encode()
+                yield b"data: [DONE]\n\n"
+        return httpx.Response(200, headers={"Content-Type": "text/event-stream"}, stream=AnswerStream())
     return httpx.Response(200, json={
         "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(answer, ensure_ascii=False)}}],
         "usage": {"prompt_tokens": 100, "completion_tokens": 80, "prompt_cache_hit_tokens": 20},

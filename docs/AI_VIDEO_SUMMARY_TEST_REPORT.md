@@ -90,15 +90,15 @@ YouTube 真实问答逐条核对，共 **8/8 符合预期**：
 
 源码检查入口：
 
-- [后端学习测试](backend/tests/test_learning.py)
-- [自动测试数据库与配置隔离](backend/tests/conftest.py)
-- [隔离浏览器测试服务](backend/tests/learning_preview.py)
-- [模拟浏览器流程](frontend/tests/learning-e2e.cjs)
-- [真实平台字幕探测](backend/tests/probe_learning.py)
-- [正式 API 字幕作业验证](backend/tests/probe_learning_api.py)
-- [真实字幕页面验证](frontend/tests/learning-live.cjs)
-- [真实 DeepSeek 生成和问答验证](backend/tests/probe_learning_ai.py)
-- [已保存真实结果的浏览器验证](frontend/tests/learning-generated.cjs)
+- [后端学习测试](../backend/tests/test_learning.py)
+- [自动测试数据库与配置隔离](../backend/tests/conftest.py)
+- [隔离浏览器测试服务](../backend/tests/learning_preview.py)
+- [模拟浏览器流程](../frontend/tests/learning-e2e.cjs)
+- [真实平台字幕探测](../backend/tests/probe_learning.py)
+- [正式 API 字幕作业验证](../backend/tests/probe_learning_api.py)
+- [真实字幕页面验证](../frontend/tests/learning-live.cjs)
+- [真实 DeepSeek 生成和问答验证](../backend/tests/probe_learning_ai.py)
+- [已保存真实结果的浏览器验证](../frontend/tests/learning-generated.cjs)
 
 原始本机证据保存在 `.local/learning-browser-test/` 和 `.local/learning-real-probes/`，已被 Git 忽略。前者含明确模拟标记的摘要/导图/问答截图及 `results.json`；后者含真实探测 JSON、字幕、`ai-results.json` 和真实摘要/导图/问答/窄屏截图。这些本机文件不随 Git 分发，程序源码与报告可独立阅读。`learning-generated.cjs` 只查看已保存结果，不发起新的付费生成；`probe_learning_ai.py` 会在缺少成功结果时发起真实调用。
 

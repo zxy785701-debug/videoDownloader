@@ -26,7 +26,7 @@
 
 ## 复现
 
-独立脚本：[probe_bilibili_firefox.py](backend/tests/probe_bilibili_firefox.py)。在项目根目录运行：
+独立脚本：[probe_bilibili_firefox.py](../backend/tests/probe_bilibili_firefox.py)。在项目根目录运行：
 
 ```powershell
 backend/.venv/Scripts/python.exe backend/tests/probe_bilibili_firefox.py --url "https://www.bilibili.com/video/BV18YEQz4E1M/?p=4" --download --backup-index 1

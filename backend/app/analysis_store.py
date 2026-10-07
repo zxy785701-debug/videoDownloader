@@ -286,6 +286,16 @@ class AnalysisStore:
                 (status, encode(answer) if answer else None, error, code, message_id),
             )
 
+    def message(self, record_id: str, message_id: str) -> dict:
+        self.get(record_id)
+        with self.connection() as db:
+            row = db.execute("SELECT * FROM messages WHERE analysis_id=? AND id=?", (record_id, message_id)).fetchone()
+        if not row:
+            raise AnalysisError("MESSAGE_NOT_FOUND", "这条对话已删除或不存在。", 404)
+        item = dict(row)
+        item["answer"] = json.loads(item["answer"]) if item["answer"] else None
+        return item
+
     def record_usage(self, record_id: str, job_id: str, model: str, usage: dict):
         with self.connection() as db:
             if db.execute("SELECT 1 FROM jobs WHERE id=?", (job_id,)).fetchone():

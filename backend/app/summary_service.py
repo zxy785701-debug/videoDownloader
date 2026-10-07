@@ -4,8 +4,9 @@ import time
 
 from pydantic import ValidationError
 
-from .analysis_errors import AnalysisError
+from .analysis_errors import AnalysisError, OutputLimitError
 from .analysis_schemas import SummaryContent
+from .streaming_json import summary_prefix
 
 PROMPT_VERSION = "video-learning-3"
 SYSTEM_PROMPT = """你是视频学习笔记助手。只根据提供的字幕或分段笔记，用简体中文整理知识。
@@ -30,6 +31,21 @@ def fingerprint(record: dict, config) -> str:
 
 
 def validate_summary(data: dict, allowed: set[str]) -> dict:
+    # Models can add metadata even in JSON mode. Keep only the documented
+    # content fields, without filling missing fields or altering their values.
+    # The strict schema and citation checks below still reject incomplete data.
+    def fields(value, names):
+        return {key: value[key] for key in names if key in value} if isinstance(value, dict) else value
+
+    data = fields(data, ("headline", "overview", "chapters"))
+    if isinstance(data, dict) and isinstance(data.get("chapters"), list):
+        chapters = []
+        for value in data["chapters"]:
+            chapter = fields(value, ("title", "overview", "cue_ids", "points"))
+            if isinstance(chapter, dict) and isinstance(chapter.get("points"), list):
+                chapter["points"] = [fields(point, ("text", "cue_ids")) for point in chapter["points"]]
+            chapters.append(chapter)
+        data["chapters"] = chapters
     try:
         result = SummaryContent.model_validate(data).model_dump()
         for chapter in result["chapters"]:
@@ -45,7 +61,7 @@ def validate_summary(data: dict, allowed: set[str]) -> dict:
         raise AnalysisError("AI_OUTPUT_INVALID", "摘要结构或字幕引用无效，未保存为成功结果。") from error
 
 
-def validated_call(client, system: str, user: dict, validate, max_tokens: int, deadline: float) -> dict:
+def validated_call(client, system: str, user: dict, validate, max_tokens: int, deadline: float, *, truncation_limit: int | None = None, on_retry=None) -> dict:
     messages = [{"role": "system", "content": system}, {"role": "user", "content": json.dumps(user, ensure_ascii=False)}]
     for attempt in range(2):
         try:
@@ -53,6 +69,10 @@ def validated_call(client, system: str, user: dict, validate, max_tokens: int, d
         except AnalysisError as error:
             if error.code != "AI_OUTPUT_INVALID" or attempt:
                 raise
+            if isinstance(error, OutputLimitError) and truncation_limit:
+                max_tokens = min(max_tokens * 2, truncation_limit)
+            if on_retry:
+                on_retry(error)
             messages.append({"role": "user", "content": "上次返回的 json 为空、不完整、结构不符合要求或引用了无效 ID。请按照最初提供的数据和 json 示例重新生成，缩短文字并仅引用输入已有 ID。"})
     raise AssertionError("Unreachable")
 
@@ -77,37 +97,57 @@ def summary_ids(content: dict) -> set[str]:
     return {cue_id for c in content["chapters"] for group in [c["cue_ids"]] + [p["cue_ids"] for p in c["points"]] for cue_id in group}
 
 
-def generate_summary(record: dict, cues: list[dict], client, config, store, stage, check, cache_salt: str = "") -> dict:
+def generate_summary(record: dict, cues: list[dict], client, config, store, stage, check, cache_salt: str = "", on_preview=None, on_retry=None) -> dict:
     deadline = time.monotonic() + config.summary_timeout
     key_prefix = fingerprint(record, config) + cache_salt
     chunks = split_cues(cues, config.chunk_characters)
     results = []
 
-    def generate(user: dict, allowed: set[str], label: str, max_tokens: int):
+    def generate(user: dict, allowed: set[str], label: str, max_tokens: int, compact: bool = False):
         check()
         if time.monotonic() >= deadline:
             raise AnalysisError("SUMMARY_TIMEOUT", "整体总结超过等待上限，已完成的分段已保存，可手动重试。")
         stage(label)
+        if on_preview:
+            on_preview("", label, "starting")
         key = hashlib.sha256((key_prefix + json.dumps(user, ensure_ascii=False, sort_keys=True)).encode()).hexdigest()
         saved = store.cached_chunk(record["id"], key)
         if saved:
-            return validate_summary(saved, allowed)
+            content = validate_summary(saved, allowed)
+            if on_preview:
+                on_preview(summary_prefix(json.dumps(content, ensure_ascii=False)), label, "cached")
+            return content
         bounded = {**user, "output_budget": {
-            "max_chapters": 6 if max_tokens <= 2048 else 10,
+            "max_chapters": 6 if compact else 10,
             "max_points_per_chapter": 3,
-            "max_total_text_characters": 600 if max_tokens <= 2048 else 1200,
+            "max_total_text_characters": 600 if compact else 1200,
             "max_cue_ids_per_point": 4, "max_cue_ids_per_chapter": 6,
             "instruction": "严格控制篇幅。cue_ids仅选支持结论的代表性片段，不列举所有字幕ID；合并重复主题，优先核心知识与后段独有内容。",
         }}
-        content = validated_call(client, SYSTEM_PROMPT, bounded, lambda d: validate_summary(d, allowed), max_tokens, deadline)
+        call_client = client
+        if on_preview:
+            class StreamingSummary:
+                attempts = 0
+                def complete(self, messages, max_tokens, deadline):
+                    self.attempts += 1
+                    on_preview("", label, "retrying" if self.attempts > 1 else "generating")
+                    output = client.complete_stream(messages, max_tokens, deadline,
+                        lambda raw: on_preview(summary_prefix(raw), label, "generating"))
+                    on_preview(summary_prefix(json.dumps(output, ensure_ascii=False)), label, "validating")
+                    return output
+            call_client = StreamingSummary()
+        content = validated_call(call_client, SYSTEM_PROMPT, bounded, lambda d: validate_summary(d, allowed), max_tokens, deadline,
+                                 truncation_limit=8192, on_retry=(lambda error: on_retry(label, error.message)) if on_retry else None)
         check()
         store.save_chunk(record["id"], key, content)
+        if on_preview:
+            on_preview(summary_prefix(json.dumps(content, ensure_ascii=False)), label, "validated")
         return content
 
     for i, chunk in enumerate(chunks):
         result = generate(
             {"title": record["title"], "instruction": "整理本段提供的全部字幕。", "cues": chunk},
-            {c["id"] for c in chunk}, f"总结第 {i + 1}/{len(chunks)} 段", 4096 if len(chunks) == 1 else 2048,
+            {c["id"] for c in chunk}, f"总结第 {i + 1}/{len(chunks)} 段", 4096, compact=len(chunks) > 1,
         )
         results.append(result)
     level = 1

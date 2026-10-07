@@ -1,5 +1,6 @@
 import json
 import threading
+from urllib.parse import unquote
 from dataclasses import replace
 from http.cookiejar import CookieJar
 
@@ -381,6 +382,64 @@ def test_transcript_api_create_restore_and_delete(api, engine, monkeypatch):
     assert "00:01:10,000" in exported.text
     assert api.delete("/api/v1/analyses/" + result["id"]).status_code == 204
     assert api.get("/api/v1/analyses/" + result["id"]).status_code == 404
+
+
+@pytest.mark.parametrize("format", ["srt", "txt"])
+def test_subtitle_download_is_complete_without_summary_or_model_key(api, engine, monkeypatch, format):
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    result = transcript_result()
+    result["title"] = '中文 / English <课程> & "复习"'
+    result["language"] = "zh-Hans"
+    result["cues"] = [{"id": f"c{i + 1:06d}", "start": i * 30 + 0.001,
+                       "end": i * 30 + 12.345, "text": f"第 {i + 1} 段原文。English & <原文>\n保留换行。"}
+                      for i in range(150)]
+    engine.store.create("export-all", "https://www.youtube.com/watch?v=abcdefghijk", "YouTube", "auto")
+    engine.store.save_transcript("export-all", result)
+    assert api.get("/api/v1/analyses/export-all/transcript?offset=100").json()["offset"] == 100
+    assert api.get("/api/v1/analyses/export-all/transcript?q=第%20150%20段").json()["total"] == 1
+    response = api.get(f"/api/v1/analyses/export-all/export?format={format}")
+    assert response.status_code == 200
+    assert response.content.decode("utf-8") == response.text
+    assert "第 1 段原文。" in response.text and "第 150 段原文。" in response.text
+    assert response.text.count("保留换行。") == 150
+    separator = "," if format == "srt" else "."
+    assert f"00:00:00{separator}001" in response.text
+    assert f"01:14:30{separator}001" in response.text
+    assert f"01:14:42{separator}345" in response.text
+    if format == "srt":
+        assert response.text.startswith("1\n00:00:00,001 --> 00:00:12,345\n")
+        assert "\n\n150\n01:14:30,001 -->" in response.text
+    else:
+        assert response.text.startswith("[00:00:00.001 --> 00:00:12.345]\n")
+    filename = unquote(response.headers["content-disposition"].split("filename*=UTF-8''")[1])
+    assert filename.endswith(f"-zh-Hans.{format}")
+    assert "中文" in filename and not any(c in filename for c in '<>:"/\\|?*')
+    assert "charset=utf-8" in response.headers["content-type"]
+    assert engine.store.summary("export-all") is None
+    assert engine.store.usage("export-all")["calls"] == 0
+
+
+@pytest.mark.parametrize("format", ["srt", "txt"])
+def test_subtitle_download_unavailable_deleted_and_local_access(api, engine, format):
+    engine.store.create("empty-export", "https://www.youtube.com/watch?v=abcdefghijk", "YouTube", "auto")
+    response = api.get(f"/api/v1/analyses/empty-export/export?format={format}")
+    assert response.status_code == 409 and response.json()["detail"]["code"] == "TRANSCRIPT_NOT_READY"
+    assert api.get(f"/api/v1/analyses/empty-export/export?format={format}", headers={"Origin": "https://evil.example"}).status_code == 403
+    assert api.delete("/api/v1/analyses/empty-export").status_code == 204
+    assert api.get(f"/api/v1/analyses/empty-export/export?format={format}").status_code == 404
+
+
+@pytest.mark.parametrize("title", ["CON", "../../课程\r\nInjected: header", " " * 8, "长视频" * 150])
+def test_subtitle_attachment_filename_is_safe_and_bounded(api, engine, title):
+    ready_record(engine.store)
+    engine.store.update("record-1", title=title)
+    response = api.get("/api/v1/analyses/record-1/export?format=txt")
+    disposition = response.headers["content-disposition"]
+    assert "\r" not in disposition and "\n" not in disposition
+    filename = unquote(disposition.split("filename*=UTF-8''")[1])
+    assert len(filename) <= 150
+    assert not any(c in filename for c in '<>:"/\\|?*\r\n')
+    assert filename != "CON-zh-Hans.txt" or filename.startswith("_")
 
 
 def test_duplicate_summary_and_chat_are_not_rebilled(api, engine):

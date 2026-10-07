@@ -27,20 +27,23 @@ async function noOverflow(page) {
   const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_BROWSER_CHANNEL || 'msedge', headless: true })
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: true, reducedMotion: 'reduce' })
   const page = await context.newPage()
+  for (let attempt = 0; attempt < 60; attempt++) {
+    if (await context.request.get(base + '/api/v1/ai/config').then(r => r.ok()).catch(() => false)) break
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
   page.on('pageerror', error => errors.push(error.message))
   try {
     await check('下载首页与原有解析流程', async () => {
       await page.goto(base)
+      await page.getByRole('checkbox', { name: '解析后自动总结' }).uncheck()
       await page.getByLabel('视频页面链接').fill('https://www.youtube.com/watch?v=abcdefghijk')
       await page.getByRole('button', { name: '解析视频', exact: true }).click()
       await visible(page, '【模拟验收】原有下载流程')
       await page.getByRole('button', { name: '下载', exact: true }).click()
       await page.getByRole('link', { name: '保存到设备', exact: true }).waitFor({ state: 'visible' })
-      await page.getByRole('button', { name: '获取字幕与 AI 总结', exact: true }).click()
     })
     await check('真实后端接口创建字幕记录（模拟平台数据）', async () => {
-      await page.getByRole('button', { name: '获取字幕', exact: true }).click()
-      await visible(page, '【模拟验收】长视频学习方法')
+      await page.getByRole('button', { name: '生成总结', exact: true }).waitFor()
       await page.getByRole('button', { name: '生成总结', exact: true }).waitFor({ state: 'visible' })
       await noOverflow(page)
     })
@@ -66,9 +69,9 @@ async function noOverflow(page) {
       await page.getByRole('button', { name: '搜索', exact: true }).click()
       await visible(page, '1–1 / 1 段')
       const downloadEvent = page.waitForEvent('download')
-      await page.getByRole('link', { name: '导出 SRT', exact: true }).click()
+      await page.getByRole('button', { name: '下载字幕', exact: true }).click()
       const download = await downloadEvent
-      assert.equal(download.suggestedFilename(), 'video-subtitles.srt')
+      assert.equal(download.suggestedFilename(), '【模拟验收】长视频学习方法-zh-Hans.srt')
       await download.saveAs(path.join(artifacts, 'subtitles.srt'))
       assert.match(await fs.readFile(path.join(artifacts, 'subtitles.srt'), 'utf8'), /00:49:40,000/)
     })
@@ -99,14 +102,9 @@ async function noOverflow(page) {
       await visible(page, '字幕依据不足')
       await page.screenshot({ path: path.join(artifacts, 'desktop-chat.png'), fullPage: true })
     })
-    await check('退出学习工作区后保留原下载任务', async () => {
-      const learnHash = new URL(page.url()).hash
-      await page.getByRole('button', { name: '返回视频下载', exact: true }).click()
-      await page.getByRole('button', { name: '查看解析结果', exact: true }).click()
+    await check('切换学习页签后保留同屏下载任务', async () => {
+      await page.getByRole('button', { name: '摘要', exact: true }).click()
       await page.getByRole('link', { name: '保存到设备', exact: true }).waitFor({ state: 'visible' })
-      await page.getByRole('button', { name: '获取字幕与 AI 总结', exact: true }).click()
-      await page.evaluate(hash => { window.location.hash = hash }, learnHash)
-      await page.reload()
     })
     await check('刷新恢复摘要和完整对话', async () => {
       const hash = new URL(page.url()).hash
@@ -137,21 +135,25 @@ async function noOverflow(page) {
     await check('字幕语言切换建立独立记录', async () => {
       await page.getByLabel('切换字幕语言').selectOption('en')
       await page.locator('p.learning-muted').filter({ hasText: /^en · 人工字幕$/ }).waitFor({ state: 'visible' })
+      await page.getByRole('button', { name: /^本机学习记录/ }).click()
       assert.equal(await page.locator('.history-item').count(), 2)
+      await page.keyboard.press('Escape')
       assert.equal(await page.locator('.summary-overview').count(), 0)
     })
     await check('无字幕时阻止总结、导图和问答，保留下载入口', async () => {
-      await page.getByLabel('视频链接', { exact: true }).fill('https://www.youtube.com/watch?v=nocaptions')
-      await page.getByRole('button', { name: '获取字幕', exact: true }).click()
+      await page.getByLabel('视频页面链接', { exact: true }).fill('https://www.youtube.com/watch?v=nocaptions')
+      await page.getByRole('button', { name: '解析视频', exact: true }).click()
       await page.getByText('【模拟验收】没有可提取字幕，暂不能总结，仍可下载视频。', { exact: true }).waitFor({ state: 'visible' })
       assert.equal(await page.getByRole('button', { name: '生成总结', exact: true }).isDisabled(), true)
-      assert.equal(await page.getByRole('button', { name: '下载视频', exact: true }).isEnabled(), true)
+      assert.equal(await page.getByRole('button', { name: '下载', exact: true }).isEnabled(), true)
     })
     await check('删除学习记录，不影响原下载任务', async () => {
+      await page.getByRole('button', { name: /^本机学习记录/ }).click()
       await page.locator('.history-item.history-selected').getByRole('button', { name: /^删除记录/ }).click()
       await page.getByRole('button', { name: '确认删除', exact: true }).click()
+      await page.getByRole('button', { name: /^本机学习记录/ }).click()
       await page.waitForFunction(() => document.querySelectorAll('.history-item').length === 2)
-      await page.getByRole('button', { name: '返回视频下载', exact: true }).click()
+      await page.keyboard.press('Escape')
       // Original downloads use page-memory state: reload has always reset their UI.
       // Check a fresh download after deletion rather than claiming reload persistence.
       await page.setViewportSize({ width: 375, height: 812 })

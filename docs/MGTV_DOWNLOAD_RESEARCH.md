@@ -81,7 +81,7 @@
 
 ## 5. 测试脚本与复现
 
-[独立测试脚本](backend/tests/probe_mgtv_firefox.py)。在项目根目录：
+[独立测试脚本](../backend/tests/probe_mgtv_firefox.py)。在项目根目录：
 
 ```powershell
 # 只检查元信息、格式与清单

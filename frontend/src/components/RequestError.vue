@@ -6,6 +6,7 @@ const props = defineProps<{
   message: string
   context: 'input' | 'download'
   busy: boolean
+  autoRecover?: boolean
 }>()
 const emit = defineEmits<{ dismiss: []; retry: [] }>()
 
@@ -41,7 +42,7 @@ const explanation = computed(() => {
 
 const waitingForTask = computed(() => props.busy && props.context === 'download')
 const nextAction = computed(() => waitingForTask.value
-  ? '任务是否完成尚未确认。检查网络，恢复后刷新页面，再重新解析链接。'
+  ? props.autoRecover ? '正在自动恢复状态更新，请检查网络并稍候；当前下载任务不会重新创建。' : '任务是否完成尚未确认。检查网络，恢复后刷新页面，再重新解析链接。'
   : explanation.value.next)
 
 function focusLink() {
@@ -61,7 +62,7 @@ function refreshPage() {
       <div class="min-w-0 flex-1">
         <h3 class="text-body font-semibold text-error">{{ waitingForTask ? '暂时无法获取下载状态' : explanation.title }}</h3>
         <p class="mt-2 text-body text-ink">{{ nextAction }}</p>
-        <div v-if="waitingForTask || (!busy && context === 'input')" class="mt-2">
+        <div v-if="(waitingForTask && !autoRecover) || (!busy && context === 'input')" class="mt-2">
           <button v-if="waitingForTask" class="quiet-button border border-line text-ink" type="button" @click="refreshPage">刷新页面</button>
           <button v-else-if="explanation.retry" class="quiet-button border border-line text-ink" type="button" @click="emit('retry')">重新解析</button>
           <a v-else class="quiet-button border border-line text-ink" href="#video-link" @click="focusLink">修改链接</a>

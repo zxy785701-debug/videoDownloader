@@ -1,13 +1,16 @@
-from urllib.parse import urlsplit
+import re
+from urllib.parse import quote, urlsplit
 
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 
 from .ai_config import get_config
 from .analysis_errors import AnalysisError
 from .analysis_jobs import get_engine
 from .analysis_schemas import AnalysisCreate, ChatCreate, SummaryCreate
 from .summary_service import public_summary
+from .chat_events import chat_events
+from .summary_events import summary_events, summary_job
 
 
 def local_access(request: Request):
@@ -34,7 +37,7 @@ def ai_config():
 
 @router.post("/analyses", status_code=202)
 def create_analysis(body: AnalysisCreate):
-    return get_engine().start_transcript(body.url, body.language)
+    return get_engine().start_transcript(body.url, body.language, body.auto_summary)
 
 
 @router.get("/analyses")
@@ -59,7 +62,15 @@ def transcript(record_id: str, offset: int = Query(0, ge=0), limit: int = Query(
 
 @router.post("/analyses/{record_id}/summary", status_code=202)
 def create_summary(record_id: str, body: SummaryCreate):
-    return get_engine().start_summary(record_id, body.force)
+    return get_engine().start_summary(record_id, body.force, body.stream)
+
+
+@router.get("/analyses/{record_id}/summary/{job_id}/stream")
+def summary_stream(record_id: str, job_id: str, request: Request):
+    engine = get_engine()
+    summary_job(engine, record_id, job_id)
+    return StreamingResponse(summary_events(engine, record_id, job_id, request), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"})
 
 
 @router.get("/analyses/{record_id}/summary")
@@ -78,7 +89,15 @@ def summary(record_id: str):
 
 @router.post("/analyses/{record_id}/chat", status_code=202)
 def chat(record_id: str, body: ChatCreate):
-    return get_engine().start_chat(record_id, body.question, body.request_id)
+    return get_engine().start_chat(record_id, body.question, body.request_id, body.stream)
+
+
+@router.get("/analyses/{record_id}/messages/{message_id}/stream")
+def message_stream(record_id: str, message_id: str, request: Request):
+    engine = get_engine()
+    engine.store.message(record_id, message_id)
+    return StreamingResponse(chat_events(engine, record_id, message_id, request), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"})
 
 
 @router.get("/analyses/{record_id}/messages")
@@ -101,15 +120,23 @@ def srt_time(seconds: float) -> str:
 
 
 @router.get("/analyses/{record_id}/export")
-def export(record_id: str, format: str = Query("markdown", pattern="^(markdown|srt)$")):
+def export(record_id: str, format: str = Query("markdown", pattern="^(markdown|srt|txt)$")):
     store = get_engine().store
     record = store.get(record_id)
-    if format == "srt":
+    if format in {"srt", "txt"}:
         cues = store.cues(record_id)
         if not cues:
             raise AnalysisError("TRANSCRIPT_NOT_READY", "暂无可导出的字幕。", 409)
-        text = "\n\n".join(f"{i + 1}\n{srt_time(c['start'])} --> {srt_time(c['end'])}\n{c['text']}" for i, c in enumerate(cues)) + "\n"
-        filename = "video-subtitles.srt"
+        if format == "srt":
+            text = "\n\n".join(f"{i + 1}\n{srt_time(c['start'])} --> {srt_time(c['end'])}\n{c['text']}" for i, c in enumerate(cues)) + "\n"
+        else:
+            text = "\n\n".join(f"[{srt_time(c['start']).replace(',', '.')} --> {srt_time(c['end']).replace(',', '.')}]\n{c['text']}" for c in cues) + "\n"
+        filename = f"video-subtitles.{format}"
+        title = re.sub(r'[<>:"/\\|?*\x00-\x1f\x7f]', "_", record["title"]).strip()[:100].rstrip(". ") or "video"
+        if re.match(r"^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)", title, re.I):
+            title = "_" + title
+        language = re.sub(r"[^\w-]", "_", record["language"] or "unknown")[:40]
+        unicode_filename = f"{title}-{language}.{format}"
     else:
         saved = store.summary(record_id)
         if not saved:
@@ -124,8 +151,9 @@ def export(record_id: str, format: str = Query("markdown", pattern="^(markdown|s
                 times = "、".join(srt_time(r["start"]).replace(",", ".") for r in point["references"])
                 parts.append("- " + point["text"] + f"（原文 {times}）")
         text, filename = "\n\n".join(parts) + "\n", "video-summary.md"
+        unicode_filename = filename
     return Response(text, media_type="text/plain; charset=utf-8",
-                    headers={"Content-Disposition": f'attachment; filename="{filename}"', "X-Content-Type-Options": "nosniff"})
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"; filename*=UTF-8\'\'{quote(unicode_filename, safe="")}', "X-Content-Type-Options": "nosniff"})
 
 
 @router.delete("/analyses/{record_id}", status_code=204)

@@ -10,3 +10,10 @@ class AnalysisError(ValueError):
 
 class JobStopped(Exception):
     pass
+
+
+class OutputLimitError(AnalysisError):
+    """A complete transport response stopped at the model's output budget."""
+
+    def __init__(self):
+        super().__init__("AI_OUTPUT_INVALID", "模型达到本次输出长度上限，未保存为完整结果。")

@@ -11,7 +11,13 @@ let returnFocus: HTMLElement | null = null
 let backdropPressed = false
 
 watch(() => props.open, async open => {
-  if (!open) return
+  if (!open) {
+    // Release the native modal immediately. A fading, hidden dialog must not
+    // keep the rest of the page inert or steal focus from a new input.
+    dialog.value?.close()
+    restoreFocus()
+    return
+  }
   await nextTick()
   const panel = dialog.value
   if (props.open && panel && !panel.open) {

@@ -136,15 +136,15 @@ BibiGPT 已公开带 Bearer 鉴权的总结 API 和异步任务文档；提交�
 
 | 项目事实 | 代码入口 | 对总结扩展的影响 |
 | --- | --- | --- |
-| 返回标题、来源、封面、时长和格式 | [schemas.py](backend/app/schemas.py)、[parse_video](backend/app/video_service.py) | 没有返回/保存可供总结使用的字幕正文、章节或统一来源 ID，需要新增内容获取能力 |
-| yt-dlp 与抖音分别解析 | [video_service.py](backend/app/video_service.py)、[douyin.py](backend/app/douyin.py) | 不同平台的下载成功不代表字幕可取；应分别验证内容来源 |
-| “最佳画质”优先视频和音频合并 | [格式映射与下载](backend/app/video_service.py) | 语音总结不应默认先下载最大画质文件；内容获取策略应独立考虑 |
-| 部分任务以 302 交付 | [文件接口](backend/app/main.py) | 直链任务可能没有本地媒体，不能假设已有文件可用于转录 |
-| BackgroundTasks 与内存任务表 | [main.py](backend/app/main.py)、[任务管理](backend/app/video_service.py) | 长任务需评估取消、恢复、并发及重试；复用展示方式不等于可以原样复用生命周期 |
-| 下载任务创建起两小时到期 | [TASK_TTL 与 expire_task](backend/app/video_service.py) | 学习笔记的保留时间应单独确定，避免下载清理导致总结记录丢失 |
-| 当前页面状态只在 Vue 内存里 | [App.vue](frontend/src/App.vue) | 刷新不会恢复当前学习记录，需要明确是否要求持久化 |
-| 首页使用固定视口，结果在弹窗内滚动 | [App.vue](frontend/src/App.vue)、[ResultDialog.vue](frontend/src/components/ResultDialog.vue) | 长篇笔记、原文与播放器并排时，需单独评估阅读布局和手机使用 |
-| 默认无 AI 服务依赖/配置 | [后端依赖](backend/requirements.txt)、[前端依赖](frontend/package.json) | 需要确认模型、预算、网络与内容出站范围，不能默认已有可调用的 AI 服务 |
+| 返回标题、来源、封面、时长和格式 | [schemas.py](../backend/app/schemas.py)、[parse_video](../backend/app/video_service.py) | 没有返回/保存可供总结使用的字幕正文、章节或统一来源 ID，需要新增内容获取能力 |
+| yt-dlp 与抖音分别解析 | [video_service.py](../backend/app/video_service.py)、[douyin.py](../backend/app/douyin.py) | 不同平台的下载成功不代表字幕可取；应分别验证内容来源 |
+| “最佳画质”优先视频和音频合并 | [格式映射与下载](../backend/app/video_service.py) | 语音总结不应默认先下载最大画质文件；内容获取策略应独立考虑 |
+| 部分任务以 302 交付 | [文件接口](../backend/app/main.py) | 直链任务可能没有本地媒体，不能假设已有文件可用于转录 |
+| BackgroundTasks 与内存任务表 | [main.py](../backend/app/main.py)、[任务管理](../backend/app/video_service.py) | 长任务需评估取消、恢复、并发及重试；复用展示方式不等于可以原样复用生命周期 |
+| 下载任务创建起两小时到期 | [TASK_TTL 与 expire_task](../backend/app/video_service.py) | 学习笔记的保留时间应单独确定，避免下载清理导致总结记录丢失 |
+| 当前页面状态只在 Vue 内存里 | [App.vue](../frontend/src/App.vue) | 刷新不会恢复当前学习记录，需要明确是否要求持久化 |
+| 首页使用固定视口，结果在弹窗内滚动 | [App.vue](../frontend/src/App.vue)、[ResultDialog.vue](../frontend/src/components/ResultDialog.vue) | 长篇笔记、原文与播放器并排时，需单独评估阅读布局和手机使用 |
+| 默认无 AI 服务依赖/配置 | [后端依赖](../backend/requirements.txt)、[前端依赖](../frontend/package.json) | 需要确认模型、预算、网络与内容出站范围，不能默认已有可调用的 AI 服务 |
 | Cookie/代理等通过进程环境读取 | [YouTube 配置文档](YOUTUBE_SETUP.md) | 当前不自动加载 .env；新增 AI 配置的载入、校验与报错须明确 |
 
 当前产品没有内置视频播放器、字幕搜索、语音转录、摘要、问答、总结缓存或历史库。首页样式和组件已具备响应式、焦点与错误反馈基础，可以复用其视觉和交互规范。
