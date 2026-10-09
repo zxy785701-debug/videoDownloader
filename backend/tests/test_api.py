@@ -28,6 +28,22 @@ def test_parse_returns_metadata_without_source_urls(monkeypatch):
     assert "url" not in response.json()
 
 
+def test_parse_reports_upstream_412_without_exposing_private_error_details(monkeypatch, caplog):
+    import logging
+    from yt_dlp.utils import DownloadError
+
+    def rejected(url):
+        raise DownloadError("Unable to download metadata: HTTP Error 412: Precondition Failed "
+                            "https://cdn.test/?token=PRIVATE_TOKEN Cookie: PRIVATE_SESSION")
+    monkeypatch.setattr(video_service, "parse_video", rejected)
+    with caplog.at_level(logging.INFO):
+        response = client.post("/api/v1/parse", json={"url": "https://www.bilibili.com/video/BV1N2pc6gErK/"})
+    assert response.status_code == 422
+    assert "HTTP 412" in response.json()["detail"]
+    assert "category=upstream_blocked" in caplog.text
+    assert all(value not in response.text + caplog.text for value in ("PRIVATE_TOKEN", "PRIVATE_SESSION", "https://cdn.test"))
+
+
 def test_download_creates_ready_server_task(monkeypatch, tmp_path):
     monkeypatch.setattr(main.video_service, "validate_public_http_url", lambda url: url)
     monkeypatch.setattr(video_service, "DOWNLOAD_DIR", tmp_path)

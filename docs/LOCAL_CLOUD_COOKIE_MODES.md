@@ -1,6 +1,6 @@
 # 本地 Firefox 与云端匿名双模式
 
-更新日期：2026-10-09。无需切换源码或增加浏览器 Cookie 上传接口，同一份项目可分别在 Windows 本机、Ubuntu／宝塔服务器运行。
+更新日期：2026-10-10。无需切换源码或增加浏览器 Cookie 上传接口，同一份项目可分别在 Windows 本机、Ubuntu／宝塔服务器运行。
 
 ## 运行方式
 
@@ -52,6 +52,7 @@ $env:MGTV_USE_FIREFOX_SESSION = '1'
 
 ```dotenv
 BILIBILI_USE_FIREFOX_SESSION=0
+BILIBILI_METADATA_SOURCE=api
 MGTV_USE_FIREFOX_SESSION=0
 VIDEO_LEARNING_FIREFOX_SESSION=0
 YTDLP_COOKIES_FROM_BROWSER=
@@ -59,7 +60,9 @@ YTDLP_COOKIES_FROM_BROWSER=
 
 `BILIBILI_*`、`MGTV_*` 和 `YTDLP_*` 沿用已有约定，只从**进程环境**读取；不要仅将它们放入仓库根 `.env` 后期待生效。`VIDEO_LEARNING_FIREFOX_SESSION` 支持根 `.env`，但进程环境优先。使用进程管理器／systemd EnvironmentFile 时同理，将上述值交给现有主服务进程，然后重启该进程。
 
-此配置避免服务器尝试读取不存在的 Firefox。若继续使用默认的自动探测，本次修复也会处理真实 Cookie 读取失败并回退匿名。
+此配置避免服务器尝试读取不存在的 Firefox。`BILIBILI_METADATA_SOURCE=api` 是后续新增的 B 站模式：直接用官方元信息和播放接口，适用于本次已确认“网页 412、API 允许播放”的宝塔环境，仅支持普通投稿的 BV／AV 直接链接，分 P 使用 `?p=N`。默认不配置或设为 `webpage` 时，本地网页提取与 Firefox 方式不变。API 模式也保留已选择会话，但不会自动获得登录或付费权限；详情与验证记录见 [B 站 API 模式](BILIBILI_CLOUD_412.md)。
+
+若继续使用默认的自动探测，原双模式修复也会处理真实 Cookie 读取失败并回退匿名。API／网页模式在提取开始前选择，API 被拒绝后不会静默改用其他登录态或模式。
 
 来源与 HTTPS Cookie 配置继续按 [可信来源部署说明](ORIGIN_PROXY_DEPLOYMENT.md)执行，不能用关闭来源校验解决 Cookie 读取问题。主服务、会员服务继续绑定 `127.0.0.1`，Mock 支付服务不能反代到公网。本次无需修改 Nginx、重建前端或重启会员服务。
 

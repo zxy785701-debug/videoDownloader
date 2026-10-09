@@ -6,6 +6,7 @@ URLs stay inside the downloader; no installed yt-dlp files are modified.
 import base64
 import json
 import logging
+import math
 import os
 import re
 import subprocess
@@ -18,7 +19,7 @@ from yt_dlp.extractor.bilibili import BiliBiliIE
 from yt_dlp.extractor.mgtv import MGTVIE
 from yt_dlp.networking import Request
 from yt_dlp.networking.exceptions import HTTPError
-from yt_dlp.utils import ExtractorError, parse_m3u8_attributes, url_or_none
+from yt_dlp.utils import ExtractorError, float_or_none, int_or_none, parse_m3u8_attributes, url_or_none
 
 logger = logging.getLogger(__name__)
 MAX_METADATA_BYTES = 2 * 1024 * 1024
@@ -58,6 +59,13 @@ def platform_for(url):
     if host in {'mgtv.com', 'www.mgtv.com', 'w.mgtv.com'} and MGTVIE.suitable(url):
         return 'mgtv'
     return None
+
+
+def bilibili_metadata_source():
+    source = os.environ.get('BILIBILI_METADATA_SOURCE', 'webpage').strip().lower()
+    if source not in {'webpage', 'api'}:
+        raise PlatformError('CONFIG_INVALID', 'BILIBILI_METADATA_SOURCE 需为 webpage 或 api。')
+    return source
 
 
 def read_json(ydl, url, headers=None):
@@ -209,6 +217,65 @@ class BilibiliIE(BiliBiliIE):
                 fmt['_platform_backup_urls'] = [value for value in values if url_or_none(value)] if isinstance(values, list) else []
         return formats
 
+    def _extract_api(self, url, part):
+        """Use the public metadata API and yt-dlp's signed playback helper.
+
+        Selected before extraction, never as a retry after a permission failure.
+        Cookies, signing and transport remain owned by this same downloader.
+        """
+        match = self._match_valid_url(url)
+        prefix, identifier = match.group('prefix', 'id')
+        if not re.fullmatch(r'[\w]{10}' if prefix.upper() == 'BV' else r'\d+', identifier):
+            raise PlatformError('METADATA_INVALID', 'B 站视频标识无效，请检查直接视频链接。')
+        query = {'bvid': 'BV' + identifier} if prefix.upper() == 'BV' else {'aid': identifier}
+        headers = {'Referer': 'https://www.bilibili.com/', 'Origin': 'https://www.bilibili.com'}
+        result = self._download_json('https://api.bilibili.com/x/web-interface/view', identifier,
+                                     query=query, headers=headers, note='Downloading public video metadata')
+        if not isinstance(result, dict) or result.get('code') != 0 or not isinstance(result.get('data'), dict):
+            raise PlatformError('METADATA_REJECTED', 'B 站未提供可用的视频信息，请检查链接、访问权限或稍后重试。')
+        data = result['data']
+        bvid, aid = data.get('bvid'), int_or_none(data.get('aid'))
+        if (not isinstance(bvid, str) or not re.fullmatch(r'BV[\w]{10}', bvid)
+                or not aid or (query.get('bvid') and bvid != query['bvid'])
+                or (query.get('aid') and aid != int(query['aid']))):
+            raise PlatformError('METADATA_INVALID', 'B 站返回的视频标识与链接不一致，请重新解析。')
+        if data.get('redirect_url') or (data.get('rights') or {}).get('is_stein_gate'):
+            raise PlatformError('API_UNSUPPORTED', 'B 站 API 模式暂不支持跳转番剧或互动视频，请使用普通投稿的直接链接。')
+        self._part_pages = data.get('pages') if isinstance(data.get('pages'), list) else []
+        page = next((entry for entry in self._part_pages if isinstance(entry, dict) and entry.get('page') == part), None)
+        if not page or (int_or_none(page.get('cid')) or 0) <= 0:
+            raise PlatformError('PART_INVALID', '该 B 站分 P 不存在，请检查链接。')
+        expected = float_or_none(page.get('duration'))
+        if not expected or not math.isfinite(expected) or expected < 0:
+            raise PlatformError('METADATA_INVALID', 'B 站未返回可校验的完整分 P 时长，请稍后重试。')
+        cid = int(page['cid'])
+        play_info = self._download_playinfo(bvid, cid, headers=headers, query={'try_look': 1})
+        formats = self.extract_formats(play_info)
+        if not formats:
+            raise PlatformError('NO_FORMATS', 'B 站未提供可下载格式，请确认当前会话具有完整观看权限。')
+        # Legacy FLV fragments need a separate multi-video merge workflow; never
+        # concatenate them as though they were a complete single media stream.
+        formats = [fmt for fmt in formats if not fmt.get('fragments')]
+        if not formats:
+            raise PlatformError('API_UNSUPPORTED', 'B 站 API 模式暂不支持该分段格式，请使用其他视频或本机网页模式。')
+        duration = float_or_none(play_info.get('timelength'), scale=1000)
+        if not duration or not math.isfinite(duration) or abs(duration - expected) > max(3, expected * 0.005):
+            raise PlatformError('PREVIEW_ONLY', 'B 站返回的时长与完整分 P 不一致，当前内容可能仅为试看。')
+        selected_part = len(self._part_pages) > 1 or 'p' in parse_qs(urlsplit(url).query)
+        title = data.get('title') or bvid
+        if len(self._part_pages) > 1:
+            title += f' p{part:02d} {page.get("part") or ""}'
+        owner, stat = data.get('owner') or {}, data.get('stat') or {}
+        return {
+            'id': f'{bvid}_p{part}' if selected_part else bvid,
+            'title': title, 'duration': duration, 'formats': formats,
+            'thumbnail': url_or_none(data.get('pic')), 'description': data.get('desc'),
+            'uploader': owner.get('name'), 'uploader_id': str(owner['mid']) if owner.get('mid') else None,
+            'timestamp': int_or_none(data.get('pubdate')), 'view_count': int_or_none(stat.get('view')),
+            'http_headers': {'Referer': url, 'Origin': headers['Origin']},
+            'subtitles': self.extract_subtitles(bvid, cid, aid),
+        }
+
     def _real_extract(self, url):
         self._part_pages = []
         try:
@@ -218,7 +285,7 @@ class BilibiliIE(BiliBiliIE):
         except ValueError:
             raise PlatformError('PART_INVALID', 'B 站分 P 编号必须是正整数。') from None
         try:
-            info = super()._real_extract(url)
+            info = self._extract_api(url, part) if bilibili_metadata_source() == 'api' else super()._real_extract(url)
         except ExtractorError as error:
             if 'supporter-only video' in str(error).lower():
                 raise PlatformError('RIGHTS_REQUIRED', '当前 B 站账号未取得此充电视频的完整观看权限，请确认 Firefox 中能够完整播放。') from error

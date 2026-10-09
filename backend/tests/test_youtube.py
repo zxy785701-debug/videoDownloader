@@ -44,10 +44,12 @@ def test_invalid_configuration_has_safe_message(monkeypatch, name, value):
     ("No supported JavaScript runtime", "js_challenge"),
     ("missing PO Token", "po_token"),
     ("HTTP Error 403: Forbidden", "forbidden"),
+    ("HTTP Error 412: Precondition Failed", "upstream_blocked"),
     ("HTTP Error 429", "rate_limited"),
     ("Connection timed out", "network"),
     ("This video is unavailable", "unavailable"),
     ("Requested format is not available", "formats"),
+    ("Unable to extract initial state", "extractor_response"),
 ])
 def test_errors_have_consistent_parse_and_download_guidance(message, category):
     error = RuntimeError(message)
@@ -60,10 +62,19 @@ def test_upstream_logs_do_not_expose_credentials_or_signed_urls(caplog):
     with caplog.at_level(logging.WARNING):
         upstream.warning("HTTP 403 https://cdn.test/v?token=SECRET Cookie: SESSION")
         upstream.error("ProxyError http://user:PASSWORD@localhost:7890")
+        upstream.error("HTTP Error 412: Precondition Failed https://cdn.test/?token=SECRET")
         upstream.debug("SECRET")
     assert "category=forbidden" in caplog.text
     assert "category=network" in caplog.text
+    assert "category=upstream_blocked" in caplog.text
     assert all(value not in caplog.text for value in ("SECRET", "SESSION", "PASSWORD", "https://"))
+
+
+def test_http_412_detection_does_not_treat_video_or_format_ids_as_statuses():
+    for message in ("Video 4120229 unavailable metadata", "Requested format HTTP 4120", "https://cdn.test/video/412?token=SECRET"):
+        assert service.error_category(message) != "upstream_blocked"
+    for message in ("HTTP 412", "HTTP status: 412", "status code=412"):
+        assert service.error_category(message) == "upstream_blocked"
 
 
 def test_youtube_auto_download_skips_redirect_probe(monkeypatch, tmp_path):

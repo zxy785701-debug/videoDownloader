@@ -78,6 +78,9 @@ def _is_youtube(url: str | None) -> bool:
 
 def error_category(error: object) -> str:
     message = str(error).casefold().replace("’", "'")
+    # Match an HTTP status, not digits in a video ID, format or signed URL.
+    if re.search(r"\b(?:http(?:\s+(?:error|status))?|status\s+code)\s*[:=]?\s*412\b", message):
+        return "upstream_blocked"
     for category, markers in (
         ("cookie_decryption", ("dpapi", "decrypt cookies")),
         ("cookie_database", ("could not copy chrome cookie database",)),
@@ -91,6 +94,7 @@ def error_category(error: object) -> str:
         ("network", ("timed out", "timeout", "proxyerror", "connection refused", "unable to connect", "failed to establish a new connection", "name resolution", "certificate verify failed")),
         ("unavailable", ("video unavailable", "video is unavailable", "private video", "not available in your country", "video has been removed")),
         ("formats", ("requested format is not available", "no video formats")),
+        ("extractor_response", ("unable to extract initial state",)),
     ):
         if any(marker in message for marker in markers):
             return category
@@ -183,11 +187,13 @@ def friendly_error(error: Exception) -> str:
         "network_permission": "当前后端进程的网络访问被限制（Windows 10013）。请通过本机 PowerShell 运行 start-local.ps1，并检查该进程的网络权限。",
         "js_challenge": "YouTube JavaScript 挑战解析失败。请检查 Node.js 22+ 或受支持的 Deno，以及 yt-dlp[default] / EJS 版本；修改后重启后端。",
         "po_token": "YouTube 需要 PO Token。请安装并启动 bgutil Provider，配置 YTDLP_POT_BASE_URL 后重试；Token 不能保证解决登录验证。",
+        "upstream_blocked": "视频平台拒绝了当前请求（HTTP 412）。可能涉及请求校验或访问限制，请稍后重试；若仅云端失败，可在本机启动后端后重试。需要登录的内容仍要求后端可用的登录会话。",
         "rate_limited": "上游请求过于频繁（429），请稍后重试并减少并发。",
         "forbidden": "上游拒绝访问（403）。请检查会话、网络出口和链接有效性；若为 YouTube，再检查 PO Token 配置。",
         "network": "无法连接视频平台或连接超时。YouTube 可通过 YTDLP_PROXY 配置后端代理，请检查代理、网络和证书。",
         "unavailable": "视频不可用，可能已删除、设为私密或受地区限制。请先确认浏览器可以播放。",
         "formats": "当前没有可用的所选格式。请重新解析并选择最佳画质；YouTube 还需检查 JS runtime 和 PO Token 警告。",
+        "extractor_response": "视频平台返回的网页缺少解析所需信息。请检查 yt-dlp 版本与请求客户端配置；若仅云端失败，可在本机启动后端后重试。",
     }
     return messages.get(error_category(error), "无法解析此链接。请检查地址，或确认视频无需登录且可以公开访问。")
 

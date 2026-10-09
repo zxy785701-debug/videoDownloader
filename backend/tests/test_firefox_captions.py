@@ -130,3 +130,23 @@ def test_cookie_profile_error_guidance_supports_cloud_and_windows():
     message = video_service.friendly_error(DownloadError('could not find firefox cookies database in PRIVATE_PROFILE'))
     assert '云端' in message and '本地' in message and 'PRIVATE_PROFILE' not in message
     assert 'PowerShell' not in message
+
+
+def test_caption_http_412_is_fetch_failure_and_not_missing_or_login_required(monkeypatch):
+    def rejected(*args, **kwargs):
+        raise DownloadError('HTTP Error 412: Precondition Failed https://cdn.test/?token=PRIVATE_TOKEN')
+    monkeypatch.setattr(subtitle_service.YoutubeDL, 'extract_info', rejected)
+    with pytest.raises(AnalysisError) as caught:
+        subtitle_service.extract_transcript(URLS[0], config=replace(get_config(), firefox_subtitle_session=False))
+    assert caught.value.code == 'CAPTIONS_FETCH_FAILED'
+    assert 'HTTP 412' in caught.value.message and 'PRIVATE_TOKEN' not in caught.value.message
+
+
+def test_caption_http_412_warning_does_not_claim_video_has_no_captions(monkeypatch):
+    def missing(self, *args, **kwargs):
+        self.params['logger'].warning('HTTP Error 412: Precondition Failed')
+        return {'id': 'sample', 'duration': 60, 'subtitles': {}}
+    monkeypatch.setattr(subtitle_service.YoutubeDL, 'extract_info', missing)
+    with pytest.raises(AnalysisError) as caught:
+        subtitle_service.extract_transcript(URLS[0], config=replace(get_config(), firefox_subtitle_session=False))
+    assert caught.value.code == 'CAPTIONS_FETCH_FAILED'

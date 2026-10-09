@@ -168,7 +168,7 @@ class _CaptionLogger(video_service._YtdlpLogger):
         safe = str(message).casefold()
         if "subtitles are only available when logged in" in safe or "sign in" in safe or "fresh cookies" in safe:
             self.access_required = True
-        if "unable to download" in safe or "failed to download" in safe or "429" in safe or "403" in safe:
+        if "unable to download" in safe or "failed to download" in safe or "429" in safe or "403" in safe or video_service.error_category(message) == "upstream_blocked":
             self.fetch_failed = True
         super().warning(message)
 
@@ -243,7 +243,7 @@ def _resource_body(resource: dict, info: dict, ydl, platform: str, config: AICon
 
 
 @contextmanager
-def _caption_downloader(options: dict, optional_firefox: bool):
+def _caption_downloader(options: dict, optional_firefox: bool, platform: str = ''):
     settings = dict(options)
     client = None
     if optional_firefox:
@@ -266,6 +266,8 @@ def _caption_downloader(options: dict, optional_firefox: bool):
     if client is None:
         client = YoutubeDL(settings)
     with client:
+        if platform == 'Bilibili' and platform_adapters.bilibili_metadata_source() == 'api':
+            client.add_info_extractor(platform_adapters.BilibiliIE())
         yield client
 
 
@@ -289,7 +291,7 @@ def extract_transcript(url: str, requested_language: str = "auto", config: AICon
     if optional_firefox:
         options["cookiesfrombrowser"] = ("firefox", config.firefox_subtitle_profile)
     try:
-        with _caption_downloader(options, optional_firefox) as ydl:
+        with _caption_downloader(options, optional_firefox, platform) as ydl:
             info = ydl.extract_info(safe_url, download=False)
             if not isinstance(info, dict) or info.get("_type") in {"playlist", "multi_video"}:
                 raise AnalysisError("SINGLE_VIDEO_REQUIRED", "请提供单个视频或明确的 B 站分 P 链接。")
@@ -328,6 +330,8 @@ def extract_transcript(url: str, requested_language: str = "auto", config: AICon
         raise
     except Exception as error:
         category = video_service.error_category(error)
+        if category == "upstream_blocked":
+            raise AnalysisError("CAPTIONS_FETCH_FAILED", video_service.friendly_error(error)) from error
         if caption_logger.access_required or platform_adapters.cookie_load_failed(error) or category.startswith("cookie") or category in {"login_required", "forbidden"} or "fresh cookies" in str(error).lower():
             raise AnalysisError("CAPTIONS_ACCESS_REQUIRED", "平台字幕需要可用登录会话或受到访问限制。请检查后端所在设备的会话与权限；云端后端不能读取访问者电脑的 Cookie。本机 B 站／抖音可启用字幕专用 Firefox 会话，YouTube 沿用已选择的会话。") from error
         raise AnalysisError("CAPTIONS_FETCH_FAILED", "视频或字幕信息获取失败，请检查平台链接、网络和代理后重试。") from error
