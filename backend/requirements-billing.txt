@@ -1,0 +1,2 @@
+-r requirements.txt
+stripe==16.0.0

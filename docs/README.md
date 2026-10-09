@@ -2,6 +2,13 @@
 
 面向个人学习与获授权公开视频保存的 Web 原型。前端为 Vue 3 + TypeScript + Vite + Tailwind CSS，后端为 FastAPI；哔哩哔哩、YouTube 等使用 yt-dlp，抖音使用独立的公开分享页解析模块。
 
+## 中英文公开站点与 SEO
+
+本机启动方式和工作区保持原样，新增 `/zh/`、`/en/` 公开介绍及视频下载、AI 总结、字幕下载教程。正文为静态 HTML，不读取本机学习记录；无正式域名时默认不收录。独立公开构建命令为 `npm.cmd run build:site --prefix frontend`，输出 `frontend/site-dist/`，部署无需开放本机 API。
+
+正式域名、语言关联、站点地图和站长验证配置见 [SEO 配置与发布](SEO_SETUP.md)，现状分析见 [SEO 审计](SEO_PLAN_AND_AUDIT.md)，自动检查和人工验收入口见 [SEO 测试报告](SEO_TEST_REPORT.md)。网站尚未上线，尚未验证真实搜索收录或排名。
+最新 TDK 与外链计划见 [SEO 完善](SEO_REFINEMENT.md)。公开页及同源 Markdown 的 AI 阅读能力、九个平台的抓取策略和 Google-Extended 用户选择见 [GEO 方案](GEO_PLAN_AND_SETUP.md)；本轮验证与上线后效果记录分别见 [联合测试](SEO_GEO_TEST_REPORT.md) 和 [GEO 评估](GEO_EVALUATION.md)。
+
 ## B 站与芒果 TV 下载扩展
 
 后端已接入 Firefox 会话与新平台适配。B 站默认优先使用 Firefox，并检查是否登录；未登录或无法读取会话时回退匿名流程。下载保留分 P，主 CDN 网络失败时自动尝试平台返回的同格式备用地址。芒果采用已验证的官网 pcweb 播放请求，列出清晰度并检查完整清单，可尝试保存当前账号有权完整观看的电影、电视剧等视频。

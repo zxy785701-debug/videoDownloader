@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:site": "node --experimental-strip-types seo/build-site.ts",
+    "test:seo": "node --experimental-strip-types --test tests/seo-build.test.mjs",
+    "test:geo": "node --experimental-strip-types --test tests/geo-build.test.mjs"
   },
   "dependencies": {
     "@lucide/vue": "^1.49.0",

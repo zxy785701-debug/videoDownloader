@@ -2,7 +2,7 @@
 import { nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { X } from '@lucide/vue'
 
-const props = defineProps<{ open: boolean }>()
+const props = defineProps<{ open: boolean; variant?: 'default' | 'account' | 'membership' | 'notice' }>()
 const emit = defineEmits<{ close: [] }>()
 const dialog = ref<HTMLDialogElement | null>(null)
 const heading = ref<HTMLHeadingElement | null>(null)
@@ -82,13 +82,13 @@ onBeforeUnmount(() => {
 
 <template>
   <Transition name="fade" @after-leave="afterLeave">
-    <dialog v-show="open" ref="dialog" class="result-dialog m-auto max-h-result-height w-result-frame max-w-result-panel overflow-hidden rounded-panel border border-line bg-surface p-0 text-ink backdrop:bg-overlay" :aria-labelledby="headingId" @cancel.prevent="emit('close')" @pointerdown="startBackdropPress" @click="dismissOutside" @keydown="keepFocus" @close="restoreFocus">
+    <dialog v-show="open" ref="dialog" class="result-dialog m-auto max-h-result-height w-result-frame max-w-result-panel overflow-hidden rounded-panel border border-line bg-surface p-0 text-ink backdrop:bg-overlay" :class="'result-dialog-' + (variant || 'default')" :aria-labelledby="headingId" @cancel.prevent="emit('close')" @pointerdown="startBackdropPress" @click="dismissOutside" @keydown="keepFocus" @close="restoreFocus">
       <div class="flex max-h-result-height flex-col">
-        <div class="sticky top-0 z-dialog-header flex min-h-touch shrink-0 items-center justify-between gap-4 border-b border-line bg-surface px-4 md:px-6">
-          <h2 :id="headingId" ref="heading" tabindex="-1" class="text-body font-medium"><slot name="title">解析结果</slot></h2>
+        <div class="result-dialog-header sticky top-0 z-dialog-header flex min-h-touch shrink-0 items-center justify-between gap-4 border-b border-line bg-surface px-4 md:px-6">
+          <div><h2 :id="headingId" ref="heading" tabindex="-1" class="text-body font-medium"><slot name="title">解析结果</slot></h2><p v-if="$slots.description" class="result-dialog-description"><slot name="description" /></p></div>
           <button class="quiet-button size-touch shrink-0 px-0" type="button" aria-label="关闭弹窗" @click="emit('close')"><X class="size-icon" aria-hidden="true" /></button>
         </div>
-        <div class="min-h-0 overflow-y-auto overscroll-contain"><slot /></div>
+        <div class="result-dialog-body min-h-0 overflow-y-auto overscroll-contain"><slot /></div>
       </div>
     </dialog>
   </Transition>

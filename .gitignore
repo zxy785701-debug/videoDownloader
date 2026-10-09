@@ -6,6 +6,7 @@ backend/data/
 .pytest_cache/
 frontend/node_modules/
 frontend/dist/
+frontend/site-dist/
 frontend/.vite/
 
 # Local backups, test evidence and optional third-party runtimes
@@ -16,6 +17,7 @@ frontend/.vite/
 .env
 .env.*
 !.env.example
+!.env.billing.example
 *.log
 *.tsbuildinfo
 .DS_Store

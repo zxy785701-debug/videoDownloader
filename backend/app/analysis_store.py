@@ -228,10 +228,16 @@ class AnalysisStore:
                 (status, stage, error, code, now(), job_id),
             )
 
-    def save_summary(self, record_id: str, version_id: str, fingerprint: str, content: dict, model: str, prompt_version: str):
+    def save_summary(self, record_id: str, version_id: str, fingerprint: str, content: dict, model: str, prompt_version: str, completed_job_id: str | None = None):
         with self.connection() as db:
             if not db.execute("SELECT 1 FROM analyses WHERE id=?", (record_id,)).fetchone():
                 return
+            if completed_job_id:
+                # Durable job outcome and saved result must agree for quota recovery after a crash.
+                updated = db.execute("UPDATE jobs SET status='ready',stage='处理完成',updated_at=? WHERE id=? AND analysis_id=? AND kind='summary' AND status='processing'", (now(), completed_job_id, record_id))
+                if updated.rowcount != 1:
+                    from .analysis_errors import JobStopped
+                    raise JobStopped()
             db.execute(
                 "INSERT INTO summaries VALUES(?,?,?,?,?,?,?)",
                 (version_id, record_id, fingerprint, encode(content), model, prompt_version, now()),

@@ -45,7 +45,7 @@ onBeforeUnmount(() => window.clearTimeout(feedbackTimer))
 </script>
 
 <template>
-  <form class="grid w-full grid-cols-composer-mobile gap-2 rounded-panel border bg-surface p-2 shadow-input transition-feedback duration-enter ease-enter focus-within:border-primary focus-within:shadow-focus sm:flex sm:h-composer sm:items-center sm:gap-0 sm:overflow-hidden sm:rounded-pill sm:p-0" :class="invalid ? 'border-error' : 'border-line'" :aria-busy="parsing" @submit.prevent="emit('parse')">
+  <form class="link-composer grid w-full grid-cols-composer-mobile gap-2 rounded-panel border bg-surface p-2 shadow-input transition-feedback duration-enter ease-enter focus-within:border-primary focus-within:shadow-focus sm:flex sm:h-composer sm:items-center sm:gap-0 sm:overflow-hidden sm:rounded-pill sm:p-0" :class="invalid ? 'border-error' : 'border-line'" :aria-busy="parsing" @submit.prevent="emit('parse')">
     <div class="col-span-2 flex h-touch min-w-0 items-center gap-2 px-2 sm:h-full sm:flex-1 sm:px-4">
       <label class="sr-only" for="video-link">视频页面链接</label>
       <Link2 class="size-icon text-muted" aria-hidden="true" />

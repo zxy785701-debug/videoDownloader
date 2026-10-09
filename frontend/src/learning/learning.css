@@ -163,6 +163,11 @@
 
 /* The shared learning content now lives beside video information. */
 .workspace-navigation { display:flex; gap:8px; margin-left:auto; }
+
+@media (max-width:600px) {
+  .workspace-navigation:has(.member-entry) { flex-wrap:wrap; justify-content:flex-end; min-width:0; }
+  .workspace-navigation:has(.member-entry) .learning-button { white-space:nowrap; }
+}
 .unified-main { width:100%; max-width:1280px; margin:0 auto; padding:24px; flex:1; min-height:0; overflow:auto; display:flex; flex-direction:column; gap:24px; }
 .workspace-composer { width:100%; max-width:850px; margin:40px auto 0; flex-shrink:0; }
 .workspace-intro { text-align:center; margin-bottom:28px; }
@@ -215,6 +220,8 @@
 .workspace-start p { color:var(--ui-muted); font-size:13px; }
 .workspace-history { padding:20px; }
 .workspace-history button:disabled { opacity:.5; cursor:not-allowed; }
+.workspace-public-guides { display:flex; justify-content:center; flex-wrap:wrap; gap:8px 24px; font-size:13px; flex-shrink:0; }
+.workspace-public-guides a { color:var(--ui-muted); min-height:36px; display:inline-flex; align-items:center; text-underline-offset:4px; }
 @media (max-width:1023px) {
   .unified-shell { height:auto; min-height:100dvh; overflow:visible; }
   .unified-main { overflow:visible; flex:none; }

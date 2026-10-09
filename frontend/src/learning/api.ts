@@ -1,3 +1,9 @@
+export class LearningApiError extends Error {
+  readonly code: string
+  readonly status: number
+  constructor(message: string, code: string, status: number) { super(message); this.code = code; this.status = status }
+}
+
 export async function learningApi<T>(path: string, options: RequestInit = {}, signal?: AbortSignal): Promise<T> {
   const response = await fetch('/api/v1' + path, {
     ...options, signal,
@@ -7,7 +13,7 @@ export async function learningApi<T>(path: string, options: RequestInit = {}, si
   const result = await response.json()
   if (!response.ok) {
     const detail = result.detail
-    throw new Error(typeof detail === 'string' ? detail : detail?.message || '请求未完成，请检查输入或稍后重试。')
+    throw new LearningApiError(typeof detail === 'string' ? detail : detail?.message || '请求未完成，请检查输入或稍后重试。', typeof detail?.code === 'string' ? detail.code : '', response.status)
   }
   return result as T
 }

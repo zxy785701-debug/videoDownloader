@@ -11,6 +11,7 @@ from .analysis_schemas import AnalysisCreate, ChatCreate, SummaryCreate
 from .summary_service import public_summary
 from .chat_events import chat_events
 from .summary_events import summary_events, summary_job
+from .membership_client import COOKIE
 
 
 def local_access(request: Request):
@@ -36,8 +37,8 @@ def ai_config():
 
 
 @router.post("/analyses", status_code=202)
-def create_analysis(body: AnalysisCreate):
-    return get_engine().start_transcript(body.url, body.language, body.auto_summary)
+def create_analysis(body: AnalysisCreate, request: Request):
+    return get_engine().start_transcript(body.url, body.language, body.auto_summary, request.cookies.get(COOKIE))
 
 
 @router.get("/analyses")
@@ -61,8 +62,8 @@ def transcript(record_id: str, offset: int = Query(0, ge=0), limit: int = Query(
 
 
 @router.post("/analyses/{record_id}/summary", status_code=202)
-def create_summary(record_id: str, body: SummaryCreate):
-    return get_engine().start_summary(record_id, body.force, body.stream)
+def create_summary(record_id: str, body: SummaryCreate, request: Request):
+    return get_engine().start_summary(record_id, body.force, body.stream, request.cookies.get(COOKIE))
 
 
 @router.get("/analyses/{record_id}/summary/{job_id}/stream")

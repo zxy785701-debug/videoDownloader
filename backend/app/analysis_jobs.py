@@ -3,13 +3,15 @@ import secrets
 import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
 
 from . import chat_service, subtitle_service, summary_service
 from .ai_config import get_config, setting
 from .analysis_errors import AnalysisError, JobStopped
 from .analysis_store import AnalysisStore
-from .deepseek_client import DeepSeekClient
+from .deepseek_client import DeepSeekClient, DeepSeekHTTPPool
+from .membership_client import get_membership_client
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +24,16 @@ class AnalysisEngine:
     def __init__(self, store: AnalysisStore, workers: int = 2):
         self.store = store
         self.store.recover()
+        self.membership = get_membership_client()
+        if self.membership:
+            self.membership.recover(self.store)
         self.lock = threading.RLock()
         self.slots = threading.BoundedSemaphore(workers + 10)
         self.executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="video-learning")
         self.futures = {}
         self.closed = False
         self.client_factory = DeepSeekClient
+        self.model_http = DeepSeekHTTPPool()
         self.chat_streams = {}
         self.summary_streams = {}
 
@@ -56,6 +62,8 @@ class AnalysisEngine:
         job = self.store.job(job_id)
         if self.closed or not job or job["status"] not in {"queued", "processing"}:
             raise JobStopped()
+        if self.membership and job["kind"] == "summary":
+            self.membership.check(job_id)
 
     def _run(self, job_id, record_id, kind, action, message_id):
         try:
@@ -68,8 +76,9 @@ class AnalysisEngine:
             else:
                 self.store.set_message(message_id, "processing")
             action()
-            self.check(job_id)
-            self.store.set_job(job_id, "ready", "处理完成")
+            if not (self.membership and kind == "summary" and (self.store.job(job_id) or {}).get("status") == "ready"):
+                self.check(job_id)
+                self.store.set_job(job_id, "ready", "处理完成")
         except JobStopped:
             return
         except Exception as error:
@@ -89,12 +98,18 @@ class AnalysisEngine:
             # Consumers may stop polling a terminal job: publish it after its result state.
             self.store.set_job(job_id, "failed", "处理未完成", failure.message, failure.code)
         finally:
+            if self.membership and kind == "summary":
+                try:
+                    final_job = self.store.job(job_id) or {}
+                    self.membership.complete(job_id, final_job.get("status") == "ready", final_job.get("updated_at"))
+                except Exception as error:
+                    logger.warning("Quota settlement deferred type=%s", type(error).__name__)
             with self.lock:
                 self.summary_streams.pop(job_id, None)
                 if message_id:
                     self.chat_streams.pop(message_id, None)
 
-    def start_transcript(self, url: str, language: str, auto_summary: bool = False) -> dict:
+    def start_transcript(self, url: str, language: str, auto_summary: bool = False, member_session: str | None = None) -> dict:
         platform, safe_url = subtitle_service.platform_url(url)
         with self.lock:
             record = self.store.find(safe_url, language)
@@ -106,7 +121,7 @@ class AnalysisEngine:
                     return {"id": record["id"], "job_id": None, "cached": True}
                 if active or record["subtitle_status"] == "ready":
                     if auto_summary:
-                        self._request_auto_summary(record["id"])
+                        self._request_auto_summary(record["id"], member_session)
                     return {"id": record["id"], "job_id": active["id"] if active else None, "cached": not bool(active)}
             self._reserve()
             try:
@@ -117,7 +132,7 @@ class AnalysisEngine:
                 self.store.new_job(job_id, record_id, "subtitle", "等待获取字幕")
                 self.store.update(record_id, subtitle_status="pending", subtitle_error=None, subtitle_error_code=None)
                 if auto_summary:
-                    self._request_auto_summary(record_id)
+                    self._request_auto_summary(record_id, member_session)
             except Exception:
                 self.slots.release()
                 raise
@@ -131,14 +146,17 @@ class AnalysisEngine:
             self._schedule(job_id, record_id, "subtitle", action)
             return {"id": record_id, "job_id": job_id, "cached": False}
 
-    def _request_auto_summary(self, record_id: str):
+    def _request_auto_summary(self, record_id: str, member_session: str | None = None):
         """Persist one opt-in continuation using the existing job schema."""
         record = self.store.get(record_id)
         if self.store.summary(record_id) or record["summary_status"] != "idle":
             return
         prior = next((job for job in self.store.latest_jobs(record_id) if job["kind"] == "auto_summary"), None)
         if not prior:
-            self.store.new_job(identifier(), record_id, "auto_summary", "字幕获取成功后自动总结")
+            auto_id = identifier()
+            self.store.new_job(auto_id, record_id, "auto_summary", "字幕获取成功后自动总结")
+            if self.membership:
+                self.membership.auto_owner(auto_id, member_session, write=True)
         elif prior["status"] not in {"queued", "processing"}:
             return
         if record["subtitle_status"] == "ready":
@@ -169,7 +187,8 @@ class AnalysisEngine:
             if record["summary_status"] in {"failed", "interrupted"}:
                 self.store.set_job(pending["id"], "cancelled", "请手动重试总结")
                 return
-            self.start_summary(record_id, streaming=True)
+            owner = self.membership.auto_owner(pending["id"]) if self.membership else None
+            self.start_summary(record_id, streaming=True, member_session=owner)
             self.store.set_job(pending["id"], "ready", "已接续摘要任务")
         except AnalysisError as error:
             if error.code == "NOT_FOUND":
@@ -187,13 +206,22 @@ class AnalysisEngine:
         self.check(job_id)
         self.store.update(record_id, **metadata)
 
+    @contextmanager
     def _client(self, record_id, job_id, config):
-        return self.client_factory(
+        options = {"pool": self.model_http} if self.client_factory is DeepSeekClient else {}
+        client = self.client_factory(
             config, lambda: self.check(job_id),
             lambda usage: self.store.record_usage(record_id, job_id, config.model, usage),
+            **options,
         )
+        try:
+            yield client
+        finally:
+            close = getattr(client, "close", None)
+            if close:
+                close()
 
-    def start_summary(self, record_id: str, force: bool = False, streaming: bool = False) -> dict:
+    def start_summary(self, record_id: str, force: bool = False, streaming: bool = False, member_session: str | None = None) -> dict:
         with self.lock:
             record = self.store.get(record_id)
             if record["subtitle_status"] != "ready":
@@ -213,12 +241,16 @@ class AnalysisEngine:
                 if previous:
                     salt = previous["fingerprint"][len(fingerprint):]
             self._reserve()
+            job_id = identifier()
             try:
-                job_id = identifier()
+                if self.membership:
+                    self.membership.reserve(job_id, member_session)
                 self.store.new_job(job_id, record_id, "summary", "等待总结", fingerprint + salt)
                 self.store.update(record_id, summary_status="queued")
             except Exception:
                 self.slots.release()
+                if self.membership:
+                    self.membership.complete(job_id, False)
                 raise
             if streaming:
                 self.summary_streams[job_id] = {"record_id": record_id, "text": "", "stage": "等待总结", "phase": "waiting", "parts": []}
@@ -230,25 +262,30 @@ class AnalysisEngine:
                     "on_preview": lambda text, stage, phase: self._summary_preview(job_id, text, stage, phase),
                     "on_retry": lambda stage, reason: self._summary_retry(job_id, stage, reason),
                 } if streaming else {}
-                content = summary_service.generate_summary(
-                    record, cues, self._client(record_id, job_id, config), config, self.store,
-                    lambda text: self.store.set_job(job_id, "processing", text),
-                    lambda: self.check(job_id), salt,
-                    **preview_args,
-                )
+                with self._client(record_id, job_id, config) as client:
+                    content = summary_service.generate_summary(
+                        record, cues, client, config, self.store,
+                        lambda text: self.store.set_job(job_id, "processing", text),
+                        lambda: self.check(job_id), salt,
+                        **preview_args,
+                    )
                 self.check(job_id)
-                self.store.save_summary(record_id, identifier(), fingerprint, content, config.model, summary_service.PROMPT_VERSION)
+                self.store.save_summary(record_id, identifier(), fingerprint, content, config.model, summary_service.PROMPT_VERSION,
+                                        **({"completed_job_id": job_id} if self.membership else {}))
             try:
                 self._schedule(job_id, record_id, "summary", action)
             except Exception:
                 self.summary_streams.pop(job_id, None)
+                if self.membership:
+                    self.membership.complete(job_id, False)
                 raise
             return {"id": record_id, "job_id": job_id, "cached": False}
 
     def _summary_preview(self, job_id, text, stage, phase):
-        self.check(job_id)
+        # Stream checks are bounded to 100 ms; final cache/save paths check again.
+        # Deletion clears this state under the same lock, so late text cannot revive it.
         with self.lock:
-            if job_id in self.summary_streams:
+            if not self.closed and job_id in self.summary_streams:
                 state = self.summary_streams[job_id]
                 parts = state["parts"]
                 if phase == "starting" or not parts or parts[-1]["stage"] != stage:
@@ -304,9 +341,10 @@ class AnalysisEngine:
                 self.chat_streams[message_id] = {"record_id": record_id, "text": "", "stage": "waiting"}
             def action():
                 self.store.set_job(job_id, "processing", "根据字幕回答")
-                answer = chat_service.generate_answer(record, self.store.cues(record_id), question, history,
-                                                      self._client(record_id, job_id, config), config,
-                                                      (lambda text, stage: self._chat_preview(message_id, job_id, text, stage)) if streaming else None)
+                with self._client(record_id, job_id, config) as client:
+                    answer = chat_service.generate_answer(record, self.store.cues(record_id), question, history,
+                                                          client, config,
+                                                          (lambda text, stage: self._chat_preview(message_id, job_id, text, stage)) if streaming else None)
                 self.check(job_id)
                 self.store.set_message(message_id, "ready", answer=answer)
             try:
@@ -353,7 +391,10 @@ class AnalysisEngine:
             self.chat_streams.clear()
             self.summary_streams.clear()
             self.store.recover()
+            if self.membership:
+                self.membership.recover(self.store)
             self.executor.shutdown(wait=False, cancel_futures=True)
+            self.model_http.close()
 
 
 _engine = None

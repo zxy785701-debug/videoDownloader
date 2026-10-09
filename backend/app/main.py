@@ -5,6 +5,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -14,6 +16,8 @@ from . import video_service
 from .analysis_errors import AnalysisError
 from .analysis_jobs import close_engine, get_engine
 from .analysis_routes import router as analysis_router
+from .membership_routes import router as membership_router
+from .membership_client import close_membership_client
 from .schemas import DownloadCreated, DownloadRequest, DownloadStatus, ParseRequest, ParseResponse
 
 logging.basicConfig(level=logging.INFO)
@@ -26,7 +30,10 @@ async def lifespan(app):
     try:
         yield
     finally:
-        await run_in_threadpool(close_engine)
+        try:
+            await run_in_threadpool(close_engine)
+        finally:
+            await run_in_threadpool(close_membership_client)
 
 
 app = FastAPI(title="Video Downloader API", version="0.1.0", lifespan=lifespan)
@@ -43,7 +50,15 @@ async def analysis_error_handler(request, error: AnalysisError):
     return JSONResponse(status_code=error.status_code, content={"detail": {"code": error.code, "message": error.message}})
 
 
+@app.exception_handler(RequestValidationError)
+async def local_validation_handler(request, error):
+    if request.url.path.startswith("/api/v1/account/"):
+        return JSONResponse(status_code=422, content={"detail": {"code": "INPUT_INVALID", "message": "账号输入不符合要求，请检查字段和长度。"}})
+    return await request_validation_exception_handler(request, error)
+
+
 app.include_router(analysis_router)
+app.include_router(membership_router)
 
 
 @app.get("/api/v1/health")

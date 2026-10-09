@@ -1,24 +1,31 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { BookOpen, CirclePlay, Clock3, FileText, MessageCircle, Network, Plus, Trash2 } from '@lucide/vue'
+import { ArrowRight, BookOpen, CirclePlay, Clock3, Copyright, FileText, MessageCircle, Network, Plus, Sparkles, Trash2 } from '@lucide/vue'
 import LinkComposer from '../components/LinkComposer.vue'
 import CompactVideoResult from '../components/CompactVideoResult.vue'
 import DownloadAction from '../components/DownloadAction.vue'
-import HelpPanel from '../components/HelpPanel.vue'
+import CopyrightNotice from '../components/CopyrightNotice.vue'
+import HomeTutorial from './HomeTutorial.vue'
 import { useVideoDownload } from './useVideoDownload'
 import ResultDialog from '../components/ResultDialog.vue'
+import MemberPanel from '../membership/MemberPanel.vue'
+import MembershipPlans from '../membership/MembershipPlans.vue'
 import MindMapView from './MindMapView.vue'
 import { downloadBlob, downloadFilename } from './fileDownload'
-import { clock, learningApi, sourceKind } from './api'
+import { clock, LearningApiError, learningApi, sourceKind } from './api'
 import { readChatStream, readLearningStream } from './chatStream'
 import { mergeSummaryDraft, type SummaryDraft, type SummarySnapshot } from './summaryDraft'
 import type { AIConfig, Analysis, Message, Page, Reference, SummaryResponse, SummaryVersion, TranscriptPage } from './types'
 import './learning.css'
+import './workspace-design.css'
 
 const inputUrl = ref('')
 const download = useVideoDownload()
 const { video, url: parsedUrl, format: selectedFormat, mode: deliveryMode, task: downloadTask, fileUrl: downloadUrl, parseError, downloadError, parsing, starting, thumbnailFailed, running, locked: downloadBusy, availableModes, selection, progress } = download
-const helpOpen = ref(false)
+const rightsOpen = ref(false)
+const memberPanel = ref<InstanceType<typeof MemberPanel> | null>(null)
+const membershipState = ref({ enabled: false, signedIn: false, isMember: false, busy: false })
+function focusComposer() { linkInput.value?.scrollIntoView({ block: 'center' }); linkInput.value?.focus({ preventScroll: true }) }
 const learningUnavailable = ref('')
 let savedPreference = true
 try { savedPreference = localStorage.getItem('saveany.auto-summary') !== 'off' } catch { /* Private browser storage can be unavailable. */ }
@@ -70,6 +77,7 @@ let summaryConnected = false
 let nextSummaryReconnect = 0
 let summaryDraftJob = ''
 let pendingQuestion: { recordId: string; question: string; requestId: string } | null = null
+let autoSummaryPromptFor = ''
 const busyStates = new Set(['pending', 'fetching', 'queued', 'processing'])
 const transcriptReady = computed(() => record.value?.subtitle_status === 'ready')
 const autoSummaryJob = computed(() => record.value?.jobs?.find(job => job.kind === 'auto_summary'))
@@ -99,6 +107,10 @@ function readable(error: unknown) {
 }
 function cancelled(error: unknown) {
   return error instanceof DOMException && error.name === 'AbortError'
+}
+function showSummaryGate(code: string | null, message: string | null) {
+  if (code === 'LOGIN_REQUIRED') memberPanel.value?.showLogin(message || '请先登录，再生成新的 AI 总结。')
+  else if (code === 'QUOTA_EXCEEDED') memberPanel.value?.showPlans(message || '今日 AI 总结额度已用完，请明天再试或查看会员。')
 }
 function recordStatus(item: Analysis) {
   if (item.summary_status === 'ready') return '摘要已保存'
@@ -245,6 +257,15 @@ async function refreshCurrent() {
     const oldSubtitleStatus = record.value?.subtitle_status
     const oldSummaryStatus = record.value?.summary_status
     record.value = detail; summary.value = result.summary; messages.value = conversation.items
+    if (autoSummaryPromptFor === id) {
+      const automatic = detail.jobs?.find(job => job.kind === 'auto_summary')
+      if (automatic && !busyStates.has(automatic.status)) {
+        // Only the current opt-in attempt may prompt, once. History and polling
+        // retain the error text without reopening a dismissed account dialog.
+        autoSummaryPromptFor = ''
+        if (automatic.status === 'failed') showSummaryGate(automatic.error_code, automatic.error)
+      }
+    }
     for (const messageId of Object.keys(chatDrafts.value)) {
       const current = messages.value.find(message => message.id === messageId)
       if (!current || current.status === 'ready') delete chatDrafts.value[messageId]
@@ -273,6 +294,7 @@ function clearSelection() {
   stopPolling(); stopChatStream(true); stopSummaryStream(true); controller.abort(); controller = new AbortController()
   revision++; transcriptRevision++; refreshRevision++
   currentId.value = ''; record.value = null; summary.value = null; messages.value = []
+  autoSummaryPromptFor = ''
   transcript.value = { items: [], total: 0, offset: 0, limit: 100 }
   transcriptLoadedFor = ''; search.value = ''; highlightedCue.value = ''; question.value = ''; pendingQuestion = null
   notice.value = ''; networkError.value = ''; historyOpen.value = false; loading.value = false
@@ -280,13 +302,14 @@ function clearSelection() {
   restoring.value = false
   learningUnavailable.value = ''; tab.value = 'summary'
 }
-async function selectRecord(id: string, keepVideo = false) {
+async function selectRecord(id: string, keepVideo = false, automatic = false) {
   if (!keepVideo && id === currentId.value) { historyOpen.value = false; return }
   if (downloadBusy.value && !keepVideo) { notice.value = '当前下载仍在处理中，完成后可切换视频。'; return }
   if (!keepVideo) download.reset()
   clearSelection()
   const expected = revision
   currentId.value = id; loading.value = true; restoring.value = true
+  if (automatic) autoSummaryPromptFor = id
   window.history.replaceState(null, '', '#learn/' + encodeURIComponent(id))
   try {
     await refreshCurrent()
@@ -307,10 +330,13 @@ async function createRecord(url = inputUrl.value, language = 'auto', automatic =
     const response = await learningApi<{ id: string }>('/analyses', { method: 'POST', body: JSON.stringify({ url: submitted, language, auto_summary: automatic }) }, controller.signal)
     if (disposed || expected !== revision) return
     creating.value = false
-    await selectRecord(response.id, true)
+    await selectRecord(response.id, true, automatic)
     await loadHistory()
   } catch (error) {
-    if (!cancelled(error) && !disposed && expected === revision) notice.value = readable(error)
+    if (!cancelled(error) && !disposed && expected === revision) {
+      notice.value = readable(error)
+      if (automatic && error instanceof LearningApiError) showSummaryGate(error.code, error.message)
+    }
   } finally {
     if (expected === revision) creating.value = false
   }
@@ -352,12 +378,16 @@ function newRecord() {
 async function generate(force = false) {
   if (!summaryCompatible.value) { notice.value = '后端仍在运行旧版摘要代码，请重启后端后再生成。'; return }
   const id = currentId.value, expected = revision
+  autoSummaryPromptFor = ''
   busy.value = true; notice.value = ''
   try {
     await learningApi('/analyses/' + id + '/summary', { method: 'POST', body: JSON.stringify({ force, stream: true }) }, controller.signal)
     if (expected === revision && !disposed) await refreshCurrent()
   } catch (error) {
-    if (!cancelled(error) && expected === revision && !disposed) notice.value = readable(error)
+    if (!cancelled(error) && expected === revision && !disposed) {
+      notice.value = readable(error)
+      if (error instanceof LearningApiError) showSummaryGate(error.code, error.message)
+    }
   } finally { if (expected === revision) busy.value = false }
 }
 async function sendQuestion() {
@@ -458,16 +488,18 @@ onBeforeUnmount(() => {
 <template>
   <div class="learning-shell unified-shell">
     <header class="learning-header">
-      <a href="#top" class="learning-brand" @click.prevent="newRecord"><CirclePlay aria-hidden="true" /><span>SaveAny</span></a>
-      <span class="learning-header-label">万能视频下载器</span>
-      <nav class="workspace-navigation" aria-label="页面导航"><button class="learning-button" type="button" @click="historyOpen = true">本机学习记录（{{ historyTotal }}）</button><button class="learning-button" type="button" @click="helpOpen = true">使用帮助</button></nav>
+      <a href="#top" class="learning-brand" @click.prevent="newRecord"><span class="learning-brand-icon"><CirclePlay aria-hidden="true" /></span><span>SaveAny</span></a>
+      <span class="learning-header-label">万能视频下载总结器</span>
+      <nav v-if="!workspaceActive" class="home-navigation" aria-label="产品导航"><a href="#features">功能特性</a><a href="#tutorial">使用教程</a><a v-if="membershipState.enabled" href="#pricing">套餐价格</a></nav>
+      <nav class="workspace-navigation" aria-label="页面导航"><button class="learning-button workspace-history-trigger" type="button" @click="historyOpen = true"><Clock3 aria-hidden="true" /><span>本机学习记录（{{ historyTotal }}）</span></button><button class="learning-button workspace-rights-trigger" type="button" aria-label="版权与使用声明" title="版权与使用声明" @click="rightsOpen = true"><Copyright aria-hidden="true" /></button><MemberPanel ref="memberPanel" @state="membershipState = $event" /></nav>
     </header>
     <main class="unified-main" :class="{ 'workspace-is-active': workspaceActive }">
       <section class="workspace-composer" aria-label="解析视频">
-        <div v-if="!workspaceActive" class="workspace-intro"><p class="learning-eyebrow">从一个视频链接开始</p><h1>下载视频，顺便读懂它</h1><p>视频信息与 AI 总结，一屏查看。</p></div>
+        <div v-if="!workspaceActive" class="workspace-intro"><p class="hero-badge"><Sparkles aria-hidden="true" />下载不限量 · 学习更轻松</p><h1>视频下载与 AI 总结，<span>一站完成</span></h1><p class="hero-description">粘贴视频链接，选择画质并保存。让 AI 整理摘要、生成思维导图，<br class="hero-line-break" />视频信息与学习内容，一屏查看。</p></div>
         <LinkComposer v-model="inputUrl" :busy="composerBusy" :parsing="parsing || creating" :invalid="!!parseError" @ready="linkInput = $event" @parse="parseVideo" @paste="pasteLink" />
         <div class="workspace-preferences"><label><input v-model="autoSummary" type="checkbox" />解析后自动总结</label><span>{{ autoSummary ? '有可用字幕时调用 DeepSeek；已保存的摘要会直接复用' : '仅获取视频信息与字幕，可手动生成总结' }}</span><button v-if="workspaceActive" class="workspace-reset" type="button" :disabled="downloadBusy" @click="newRecord">换个链接</button></div>
         <p v-if="downloadBusy" class="learning-muted" role="status">下载处理中，完成后可切换视频；仍可查看摘要、字幕、导图和问答。</p>
+        <div v-if="!workspaceActive" class="hero-platforms" aria-label="常见视频平台"><span>支持平台</span><span>YouTube</span><span>Bilibili</span><span>抖音</span></div>
         <p id="supported-platforms" class="workspace-platforms">视频下载：支持多个平台 · AI 总结：B 站、抖音、YouTube 的平台字幕</p>
         <p v-if="parseError" id="input-error" class="learning-alert" role="alert">{{ parseError }}</p>
         <p v-if="notice && !workspaceActive" class="learning-notice" role="status">{{ notice }}</p>
@@ -566,10 +598,15 @@ onBeforeUnmount(() => {
         <div v-else-if="!loading" class="learning-welcome"><BookOpen aria-hidden="true" /><h2>{{ learningUnavailable ? '暂不能总结这个视频' : '准备视频学习内容' }}</h2><p>{{ learningUnavailable || (parsing ? '解析成功后自动获取字幕，并按你的选择生成总结。' : notice ? '字幕请求未完成，可重新解析或稍后重试。' : '正在获取字幕记录…') }}</p></div>
         </section>
       </div>
-      <div v-else class="workspace-start"><div><FileText aria-hidden="true" /><h2>看信息</h2><p>解析清晰度与格式，保存视频和字幕。</p></div><div><BookOpen aria-hidden="true" /><h2>读摘要</h2><p>自动整理总览、章节和知识要点。</p></div><div><MessageCircle aria-hidden="true" /><h2>继续学习</h2><p>查看思维导图，针对字幕内容提问。</p></div></div>
+      <template v-if="!workspaceActive">
+        <section id="features" class="home-section home-features" aria-labelledby="features-heading"><div class="home-section-heading"><p class="learning-eyebrow">不止于保存</p><h2 id="features-heading">把视频，变成随时可用的知识</h2><p>下载与学习放在一起，少一点切换，多一点收获。</p></div><div class="workspace-start"><div><span class="home-feature-icon"><FileText aria-hidden="true" /></span><h3>清晰保存</h3><p>解析真实清晰度与格式，按需保存视频和字幕。</p><span class="home-feature-caption">多画质选择 <ArrowRight aria-hidden="true" /></span></div><div><span class="home-feature-icon"><BookOpen aria-hidden="true" /></span><h3>快速读懂</h3><p>AI 自动整理总览、章节和知识要点，保留字幕引用。</p><span class="home-feature-caption">流式摘要与原文定位 <ArrowRight aria-hidden="true" /></span></div><div><span class="home-feature-icon"><MessageCircle aria-hidden="true" /></span><h3>深入学习</h3><p>查看思维导图，针对视频字幕提问，随时导出笔记。</p><span class="home-feature-caption">问答与学习记录 <ArrowRight aria-hidden="true" /></span></div></div></section>
+        <HomeTutorial @start="focusComposer" @rights="rightsOpen = true" />
+        <section v-if="membershipState.enabled" id="pricing" class="home-section home-pricing" aria-labelledby="pricing-heading"><div class="home-section-heading"><p class="learning-eyebrow">按你的节奏选择</p><h2 id="pricing-heading">下载免费，会员让学习更从容</h2><p>日常使用选免费版，经常总结选 VIP。一次购买，不自动续费。</p></div><MembershipPlans :signed-in="membershipState.signedIn" :is-member="membershipState.isMember" :busy="membershipState.busy" preview @start="focusComposer" @buy="memberPanel?.showPlans()" /></section>
+        <footer class="workspace-home-footer"><a class="footer-brand" href="#top" @click.prevent="focusComposer">SaveAny<span>保存视频，也保存知识。</span></a><nav class="workspace-public-guides" aria-label="产品介绍、教程与声明"><a href="/zh/">产品介绍与中文教程</a><a href="/en/" lang="en">English guides</a><button type="button" @click="rightsOpen = true">版权与使用声明</button></nav></footer>
+      </template>
     </main>
     <ResultDialog :open="historyOpen" @close="historyOpen = false"><template #title>本机学习记录</template><aside id="learning-history" class="workspace-history" aria-label="本机学习记录"><div class="learning-toolbar"><p class="learning-muted">保存在本机，重启后仍可查看。</p><button class="learning-button" type="button" :disabled="downloadBusy" @click="newRecord"><Plus aria-hidden="true" />新建</button></div><p v-if="!history.length" class="learning-empty-small">还没有记录，从一个视频开始。</p><div v-for="item in history" :key="item.id" class="history-item" :class="{ 'history-selected': currentId === item.id }"><button class="history-select" type="button" :disabled="downloadBusy && currentId !== item.id" @click="selectRecord(item.id)"><span>{{ item.title }}</span><small>{{ item.platform }} · {{ recordStatus(item) }}</small></button><button class="history-delete" type="button" :disabled="downloadBusy && currentId === item.id" :aria-label="'删除记录：' + item.title" @click="historyOpen = false; confirmation = { kind: 'record', id: item.id, title: item.title }"><Trash2 aria-hidden="true" /></button></div><button v-if="history.length < historyTotal" class="learning-button" type="button" @click="loadHistory(true)">加载更多记录</button></aside></ResultDialog>
-    <ResultDialog :open="helpOpen" @close="helpOpen = false"><template #title>使用帮助</template><HelpPanel :busy="composerBusy" @close="helpOpen = false" @example="inputUrl = 'https://www.youtube.com/watch?v=aqz-KE-bpKQ'; helpOpen = false" /></ResultDialog>
+    <ResultDialog :open="rightsOpen" variant="notice" @close="rightsOpen = false"><template #title>版权与使用声明</template><template #description>尊重创作者，按授权使用内容。</template><CopyrightNotice @close="rightsOpen = false" /></ResultDialog>
     <ResultDialog :open="!!confirmation" @close="confirmation = null"><template #title>{{ confirmation?.kind === 'chat' ? '清空视频对话' : '删除学习记录' }}</template><div v-if="confirmation" class="learning-confirm"><p>{{ confirmation.title }}</p><p>{{ confirmation.kind === 'chat' ? '删除该视频的所有本机问答记录，进行中的回答也将停止保存。' : '删除该视频在本机保存的字幕、摘要、导图、问答及中间结果。' }}</p><div class="learning-toolbar"><button class="learning-button" type="button" :disabled="busy" @click="confirmation = null">取消</button><button class="learning-button learning-danger" type="button" :disabled="busy" @click="confirmAction">{{ confirmation.kind === 'chat' ? '确认清空' : '确认删除' }}</button></div></div></ResultDialog>
   </div>
 </template>
