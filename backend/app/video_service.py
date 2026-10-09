@@ -179,7 +179,7 @@ def friendly_error(error: Exception) -> str:
             "只读取本机浏览器会话；不要把 Cookie 发到聊天或上传到网站。"
         )
     messages = {
-        "cookie_profile": "后端无法访问 Firefox 登录配置。请通过本机 PowerShell 运行 start-local.ps1；如仍失败，请检查 Firefox 配置目录及进程访问权限。",
+        "cookie_profile": "后端所在设备无法读取所选 Firefox 会话。云端服务不能读取访问者电脑的 Cookie；本地使用时请检查 Firefox 配置目录及运行后端的用户。",
         "network_permission": "当前后端进程的网络访问被限制（Windows 10013）。请通过本机 PowerShell 运行 start-local.ps1，并检查该进程的网络权限。",
         "js_challenge": "YouTube JavaScript 挑战解析失败。请检查 Node.js 22+ 或受支持的 Deno，以及 yt-dlp[default] / EJS 版本；修改后重启后端。",
         "po_token": "YouTube 需要 PO Token。请安装并启动 bgutil Provider，配置 YTDLP_POT_BASE_URL 后重试；Token 不能保证解决登录验证。",

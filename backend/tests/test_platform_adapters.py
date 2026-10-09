@@ -7,8 +7,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yt_dlp.cookies as browser_cookies
 from fastapi.testclient import TestClient
-from yt_dlp.cookies import CookieLoadError
+from yt_dlp.cookies import CookieLoadError, YoutubeDLCookieJar
 from yt_dlp.extractor.bilibili import BiliBiliIE
 from yt_dlp.extractor.mgtv import MGTVIE
 from yt_dlp.utils import DownloadError
@@ -113,6 +114,41 @@ def test_cookie_load_failure_during_constructor_also_falls_back(monkeypatch):
     monkeypatch.setattr(adapters, 'PlatformYoutubeDL', client)
     with adapters.open_downloader(BILI, {'quiet': True}) as anonymous:
         assert 'cookiesfrombrowser' not in anonymous.params
+
+
+@pytest.mark.parametrize('url', [BILI, MGTV])
+@pytest.mark.parametrize('failure', [FileNotFoundError, PermissionError])
+def test_real_ytdlp_wrapped_cookie_load_error_falls_back(monkeypatch, caplog, url, failure):
+    # Real load_cookies -> CookieLoadError -> YoutubeDL.report_error -> DownloadError.
+    # No access to the developer's actual browser or the network.
+    def unavailable(*args, **kwargs):
+        raise failure('PRIVATE_PROFILE Cookie=PRIVATE_SESSION')
+    monkeypatch.setattr(browser_cookies, 'extract_cookies_from_browser', unavailable)
+    with caplog.at_level(logging.INFO), adapters.open_downloader(url, service._video_options()) as client:
+        assert 'cookiesfrombrowser' not in client.params
+        assert client.params['cookiefile'] is None
+        assert not list(client.cookiejar)
+    assert 'anonymous' in caplog.text
+    assert 'PRIVATE_PROFILE' not in caplog.text and 'PRIVATE_SESSION' not in caplog.text
+
+
+@pytest.mark.parametrize('platform,url', [('bilibili', BILI), ('mgtv', MGTV)])
+def test_real_available_firefox_session_remains_selected(monkeypatch, platform, url):
+    jar = YoutubeDLCookieJar()
+    domain = '.bilibili.com' if platform == 'bilibili' else '.mgtv.com'
+    jar.set_cookie(Cookie(0, 'SESSDATA', 'SYNTHETIC_SESSION', None, False, domain, True, True,
+                         '/', True, False, None, True, None, None, {}))
+    reads = []
+    def browser(name, profile, *args, **kwargs):
+        reads.append(name)
+        return jar
+    monkeypatch.setattr(browser_cookies, 'extract_cookies_from_browser', browser)
+    monkeypatch.setattr(adapters, 'read_json', lambda *a, **kw: {'code': 0, 'data': {'isLogin': True}})
+    with adapters.open_downloader(url, service._video_options()) as client:
+        assert client.params['cookiesfrombrowser'][0] == 'firefox'
+        assert any(cookie.value == 'SYNTHETIC_SESSION' for cookie in client.cookiejar)
+        assert client.params['cookiefile'] is None
+    assert reads == ['firefox']
 
 
 @pytest.mark.parametrize('error', ['Permission denied: ssl-file', 'No space left on disk: tls-file'])
@@ -364,6 +400,59 @@ def test_api_parse_download_and_range_use_same_session_policy(monkeypatch, tmp_p
     service.TASKS.pop(created['task_id'], None)
     assert len(calls) == 2 and all(target == url for target, options in calls)
     assert calls[1][1]['format'] == '480'
+
+
+@pytest.mark.parametrize('url', [BILI, MGTV])
+def test_cloud_parse_and_download_succeed_after_real_cookie_wrapper_failure(monkeypatch, tmp_path, fixture_video, url):
+    modes = []
+    def unavailable(*args, **kwargs):
+        raise FileNotFoundError('PRIVATE_SERVER_PROFILE')
+    def metadata(self, target, download=False, process=True):
+        modes.append(self.params.get('cookiesfrombrowser'))
+        return {'id': 'test', 'title': '匿名公开视频', 'extractor_key': 'Bilibili',
+                'duration': 1, '_platform_expected_duration': 1,
+                'formats': [{'format_id': '480', 'height': 480, 'vcodec': 'h264', 'acodec': 'aac', 'ext': 'mp4'}]}
+    def download(self, info, download):
+        assert download and 'cookiesfrombrowser' not in self.params
+        (Path(self.params['outtmpl']['default']).parent / 'complete.mp4').write_bytes(fixture_video)
+    monkeypatch.setattr(browser_cookies, 'extract_cookies_from_browser', unavailable)
+    monkeypatch.setattr(service, 'validate_public_http_url', lambda value: value)
+    monkeypatch.setattr(service, 'DOWNLOAD_DIR', tmp_path)
+    monkeypatch.setattr(adapters.PlatformYoutubeDL, 'extract_info', metadata)
+    monkeypatch.setattr(adapters.PlatformYoutubeDL, 'process_ie_result', download)
+    with TestClient(main.app) as api:
+        assert api.post('/api/v1/parse', json={'url': url}).json()['title'] == '匿名公开视频'
+        created = api.post('/api/v1/downloads', json={'url': url, 'format_id': '480'}).json()
+        try:
+            state = api.get(created['status_url']).json()
+            assert state['status'] == 'ready'
+            assert api.get(created['download_url']).content == fixture_video
+        finally:
+            service.TASKS.pop(created['task_id'], None)
+    assert modes == [None, None]
+
+
+def test_cookie_failure_after_platform_extraction_started_does_not_retry_anonymous(monkeypatch):
+    created = []
+    real = adapters.PlatformYoutubeDL
+    def factory(options):
+        created.append(options)
+        return real(options)
+    monkeypatch.setattr(adapters, 'PlatformYoutubeDL', factory)
+    monkeypatch.setattr(adapters, '_session_usable', lambda *args: True)
+    with pytest.raises(CookieLoadError):
+        with adapters.open_downloader(BILI, service._video_options()):
+            raise CookieLoadError('late media error')
+    assert len(created) == 1
+
+
+def test_cookie_error_detection_uses_types_and_handles_exception_cycles():
+    message_only = DownloadError('could not find firefox cookies database')
+    assert not adapters.cookie_load_failed(message_only)
+    message_only.__context__ = message_only
+    assert not adapters.cookie_load_failed(message_only)
+    wrapper = DownloadError('redacted', (CookieLoadError, CookieLoadError('redacted'), None))
+    assert adapters.cookie_load_failed(wrapper)
 
 
 def test_short_file_cannot_be_marked_complete(tmp_path, fixture_video):

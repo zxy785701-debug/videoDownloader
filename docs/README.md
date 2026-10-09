@@ -13,6 +13,8 @@
 
 后端已接入 Firefox 会话与新平台适配。B 站默认优先使用 Firefox，并检查是否登录；未登录或无法读取会话时回退匿名流程。下载保留分 P，主 CDN 网络失败时自动尝试平台返回的同格式备用地址。芒果采用已验证的官网 pcweb 播放请求，列出清晰度并检查完整清单，可尝试保存当前账号有权完整观看的电影、电视剧等视频。
 
+2026-10-09 修复了 yt-dlp 包装 Cookie 读取异常导致匿名回退未执行的问题。本机继续优先 Firefox；宝塔服务器可关闭浏览器读取而使用匿名。云端不能直接使用访问者电脑的 Cookie，需要登录的字幕可能仍不可用。两种运行方式的具体配置和验收见 [本地／云端 Cookie 双模式](LOCAL_CLOUD_COOKIE_MODES.md)。
+
 两平台使用自动/服务端方式下载，下载前检查是否仅有试看，文件完成后核对音视频轨道与时长。明确选择的画质不可用时提示重新解析，不静默替换；“最佳画质”仍自动选择当前可用格式。Cookie 和签名地址不发送到前端，也不导出文件。
 
 在 Firefox 登录后，使用原启动命令并重启后端即可。可通过进程环境变量 `BILIBILI_USE_FIREFOX_SESSION=0` / `MGTV_USE_FIREFOX_SESSION=0` 分别禁用会话；`BILIBILI_FIREFOX_PROFILE` / `MGTV_FIREFOX_PROFILE` 可指定配置目录。这些变量不从 `.env` 读取，也不改变 YouTube 或 AI 字幕配置。实现与验收见 [后端适配接入报告](DOWNLOAD_ADAPTER_INTEGRATION.md)。

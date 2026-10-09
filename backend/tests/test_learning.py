@@ -611,8 +611,11 @@ def test_full_transcript_and_only_last_five_ready_turns_are_sent():
 def test_explicit_firefox_caption_session_is_scoped_to_learning(monkeypatch):
     configurations = []
     class YDL:
+        cookiejar = CookieJar()
         def __init__(self, options):
             configurations.append(options)
+        def close(self):
+            pass
         def __enter__(self):
             return self
         def __exit__(self, *args):

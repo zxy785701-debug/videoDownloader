@@ -418,6 +418,8 @@ def test_consumption_idempotency_midnight_and_member_expiry(billing):
 
 def test_expired_reservation_rejects_late_success_and_wrong_receipt(billing):
     service, user, _, _ = billing
+    # Keep this expiry check within one Beijing day; rollover is tested separately.
+    service.clock = lambda: 1791345600.0  # 2026-10-07 12:00 Beijing
     receipt = secrets.token_urlsafe(32)
     value = service.reserve(user, secrets.token_urlsafe(18), receipt)
     with pytest.raises(BillingError):

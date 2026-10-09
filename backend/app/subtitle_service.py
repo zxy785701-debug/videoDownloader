@@ -3,18 +3,22 @@
 import hashlib
 import html
 import json
+import logging
 import math
 import re
+from contextlib import contextmanager
 from urllib.parse import parse_qs, urlencode, urljoin, urlsplit, urlunsplit
 
 import httpx
 from fastapi import HTTPException
 from yt_dlp import YoutubeDL
 
-from . import douyin, video_service
+from . import douyin, platform_adapters, video_service
 from .ai_config import AIConfig, get_config
 from .analysis_errors import AnalysisError
 from .security import validate_public_http_url
+
+logger = logging.getLogger(__name__)
 
 
 def platform_url(url: str) -> tuple[str, str]:
@@ -238,6 +242,33 @@ def _resource_body(resource: dict, info: dict, ydl, platform: str, config: AICon
     raise AnalysisError("CAPTIONS_FETCH_FAILED", "字幕地址跳转过多，请重新获取。")
 
 
+@contextmanager
+def _caption_downloader(options: dict, optional_firefox: bool):
+    settings = dict(options)
+    client = None
+    if optional_firefox:
+        candidate = None
+        try:
+            candidate = YoutubeDL(settings)
+            # Cookie loading is lazy. Resolve it before extraction, so a browser
+            # setup failure can fall back without retrying platform/rights errors.
+            candidate.cookiejar
+        except Exception as error:
+            if candidate is not None:
+                candidate.close()
+            if not platform_adapters.cookie_load_failed(error):
+                raise
+            logger.info("Optional Firefox captions session unavailable; using anonymous flow")
+            settings.pop("cookiesfrombrowser", None)
+            settings["cookiefile"] = None
+        else:
+            client = candidate
+    if client is None:
+        client = YoutubeDL(settings)
+    with client:
+        yield client
+
+
 def extract_transcript(url: str, requested_language: str = "auto", config: AIConfig | None = None, on_metadata=None) -> dict:
     config = config or get_config()
     platform, safe_url = platform_url(url)
@@ -254,10 +285,11 @@ def extract_transcript(url: str, requested_language: str = "auto", config: AICon
         logger=caption_logger, extract_flat=False,
     )
     # Opt-in learning configuration only. Download settings remain untouched.
-    if platform in {"Bilibili", "Douyin"} and config.firefox_subtitle_session:
+    optional_firefox = platform in {"Bilibili", "Douyin"} and config.firefox_subtitle_session
+    if optional_firefox:
         options["cookiesfrombrowser"] = ("firefox", config.firefox_subtitle_profile)
     try:
-        with YoutubeDL(options) as ydl:
+        with _caption_downloader(options, optional_firefox) as ydl:
             info = ydl.extract_info(safe_url, download=False)
             if not isinstance(info, dict) or info.get("_type") in {"playlist", "multi_video"}:
                 raise AnalysisError("SINGLE_VIDEO_REQUIRED", "请提供单个视频或明确的 B 站分 P 链接。")
@@ -275,7 +307,7 @@ def extract_transcript(url: str, requested_language: str = "auto", config: AICon
                 })
             if not tracks:
                 if caption_logger.access_required:
-                    message = "字幕会话未提供可用权限，请检查 Firefox 是否登录对应平台后重试。" if config.firefox_subtitle_session else "该平台的字幕需要可用会话，暂不能获取；可显式启用字幕专用 Firefox 会话后重试。"
+                    message = "该平台的字幕需要登录会话。云端后端不能读取你电脑上的 Firefox Cookie；可在本机启动后端并启用字幕专用 Firefox 会话后重试。视频下载仍可单独尝试。"
                     raise AnalysisError("CAPTIONS_ACCESS_REQUIRED", message)
                 if caption_logger.fetch_failed:
                     raise AnalysisError("CAPTIONS_FETCH_FAILED", "字幕信息获取受阻，请检查网络或稍后重试。")
@@ -296,8 +328,8 @@ def extract_transcript(url: str, requested_language: str = "auto", config: AICon
         raise
     except Exception as error:
         category = video_service.error_category(error)
-        if caption_logger.access_required or category.startswith("cookie") or category in {"login_required", "forbidden"} or "fresh cookies" in str(error).lower():
-            raise AnalysisError("CAPTIONS_ACCESS_REQUIRED", "平台字幕获取需要可用会话或受到访问限制。YouTube 请检查已选择的本机会话；B 站和抖音可显式启用字幕专用 Firefox 会话，并确认已登录对应平台。") from error
+        if caption_logger.access_required or platform_adapters.cookie_load_failed(error) or category.startswith("cookie") or category in {"login_required", "forbidden"} or "fresh cookies" in str(error).lower():
+            raise AnalysisError("CAPTIONS_ACCESS_REQUIRED", "平台字幕需要可用登录会话或受到访问限制。请检查后端所在设备的会话与权限；云端后端不能读取访问者电脑的 Cookie。本机 B 站／抖音可启用字幕专用 Firefox 会话，YouTube 沿用已选择的会话。") from error
         raise AnalysisError("CAPTIONS_FETCH_FAILED", "视频或字幕信息获取失败，请检查平台链接、网络和代理后重试。") from error
     source_id = str(info.get("id") or "")
     if platform == "Bilibili":

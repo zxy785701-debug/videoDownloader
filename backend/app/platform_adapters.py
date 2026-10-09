@@ -30,6 +30,27 @@ class PlatformError(Exception):
         super().__init__(message)
 
 
+def cookie_load_failed(error):
+    """yt-dlp can wrap CookieLoadError in DownloadError while reporting it.
+
+    Match typed causes only, never message substrings. Callers use this only
+    while preparing the optional browser session, before media extraction.
+    """
+    pending, seen = [error], set()
+    while pending and len(seen) < 20:
+        current = pending.pop()
+        if not isinstance(current, BaseException) or id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, CookieLoadError):
+            return True
+        pending.extend((current.__cause__, current.__context__))
+        exc_info = getattr(current, 'exc_info', None)
+        if isinstance(exc_info, tuple) and len(exc_info) == 3:
+            pending.append(exc_info[1])
+    return False
+
+
 def platform_for(url):
     host = (urlsplit(url).hostname or '').lower()
     if host in {'bilibili.com', 'www.bilibili.com'} and BiliBiliIE.suitable(url):
@@ -107,13 +128,13 @@ def open_downloader(url, options):
         try:
             candidate = PlatformYoutubeDL({**settings, 'cookiesfrombrowser': ('firefox', profile, None, None)})
             usable = _session_usable(candidate, platform)
-        except CookieLoadError:
+        except Exception as error:
+            if not cookie_load_failed(error):
+                if candidate is not None:
+                    candidate.close()
+                raise
             usable = False
             logger.info('Firefox session unavailable platform=%s; using anonymous flow', platform)
-        except Exception:
-            if candidate is not None:
-                candidate.close()
-            raise
         if usable:
             client = candidate
         else:

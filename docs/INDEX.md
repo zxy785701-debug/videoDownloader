@@ -8,6 +8,7 @@
 | --- | --- |
 | [运行说明](README.md) | 安装依赖、个人本机启动、配置和常见使用方式 |
 | [代理与可信来源配置](ORIGIN_PROXY_DEPLOYMENT.md) | SSH 隧道 403 修复、Host／Origin 策略、宝塔环境、HTTPS Cookie 与 410 项回归 |
+| [本地／云端 Cookie 双模式](LOCAL_CLOUD_COOKIE_MODES.md) | 修复真实 yt-dlp Cookie 异常包装，本机 Firefox 优先、云端匿名及字幕权限边界 |
 | [项目总结](PROJECT_SUMMARY.md) | 功能范围、架构、代码入口、API、配置与证据边界 |
 | [同屏工作区方案](UNIFIED_VIDEO_WORKSPACE_PLAN.md) | 用户确认的布局、自动总结规则、兼容性和状态约束 |
 | [同屏工作区开发及验收](UNIFIED_VIDEO_WORKSPACE_TEST_REPORT.md) | 最终实现、255 项后端回归、71 项模拟浏览器流程、布局及真实记录副本验证 |
