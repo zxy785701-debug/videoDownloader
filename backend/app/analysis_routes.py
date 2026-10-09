@@ -1,5 +1,5 @@
 import re
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import Response, StreamingResponse
@@ -15,17 +15,7 @@ from .membership_client import COOKIE
 
 
 def local_access(request: Request):
-    if request.url.hostname not in {"localhost", "127.0.0.1"}:
-        raise AnalysisError("LOCAL_ONLY", "视频学习 API 仅用于本机访问。", 403)
-    origin = request.headers.get("origin")
-    if origin:
-        parsed = urlsplit(origin)
-        allowed = {
-            f"http://localhost:{request.url.port or 80}", f"http://127.0.0.1:{request.url.port or 80}",
-            "http://localhost:5173", "http://127.0.0.1:5173",
-        }
-        if origin not in allowed or parsed.username or parsed.password:
-            raise AnalysisError("ORIGIN_FORBIDDEN", "不允许该网页访问本机学习记录或触发模型调用。", 403)
+    request.app.state.access_policy.check(request)
 
 
 router = APIRouter(prefix="/api/v1", dependencies=[Depends(local_access)], tags=["视频学习"])

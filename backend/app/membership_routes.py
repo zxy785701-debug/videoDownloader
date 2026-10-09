@@ -75,14 +75,16 @@ def login(body: AccountBody, request: Request, response: Response):
         # Remove old local session without affecting work already reserved by that account.
         with bridge.db() as db:
             db.execute("DELETE FROM sessions WHERE id=?", (old,))
-    response.set_cookie(COOKIE, session_id, max_age=7*86400, httponly=True, samesite="strict", secure=False, path="/")
+    response.set_cookie(COOKIE, session_id, max_age=7*86400, httponly=True, samesite="strict",
+                        secure=request.app.state.access_policy.secure_cookies, path="/")
     response.headers["Cache-Control"] = "no-store"
     return {"message": "已登录。"}
 
 
 @router.post("/logout")
 def logout(request: Request, response: Response):
-    response.delete_cookie(COOKIE, path="/")
+    response.delete_cookie(COOKIE, path="/", httponly=True, samesite="strict",
+                           secure=request.app.state.access_policy.secure_cookies)
     client().logout(actor(request))
     return {"message": "已退出登录。"}
 

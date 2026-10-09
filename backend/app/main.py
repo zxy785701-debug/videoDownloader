@@ -7,12 +7,12 @@ from pathlib import Path
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from . import video_service
+from .access_policy import install_access_policy, load_access_policy
 from .analysis_errors import AnalysisError
 from .analysis_jobs import close_engine, get_engine
 from .analysis_routes import router as analysis_router
@@ -37,12 +37,7 @@ async def lifespan(app):
 
 
 app = FastAPI(title="Video Downloader API", version="0.1.0", lifespan=lifespan)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-    allow_methods=["GET", "POST", "DELETE"],
-    allow_headers=["Content-Type"],
-)
+install_access_policy(app, load_access_policy())
 
 
 @app.exception_handler(AnalysisError)

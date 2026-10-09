@@ -8,6 +8,8 @@
 
 ## 单元回归与构建
 
+2026-10-09 的来源与反向代理修复新增 105 项安全检查，完整后端 **410 项通过**；配置、缺失 Origin 规则和服务器人工验收见 [代理与可信来源配置](ORIGIN_PROXY_DEPLOYMENT.md)。服务器部署未在本轮执行。
+
 ```powershell
 Push-Location backend
 .\.venv\Scripts\python.exe -m pytest tests -q
@@ -22,6 +24,16 @@ npm.cmd run build --prefix frontend
 浏览器脚本依赖可解析的 `playwright` 包和本机 Microsoft Edge。可使用已配置的 Playwright 环境；本次使用 Codex 自带 Node／Playwright 运行时，通过 `NODE_PATH` 指向其模块目录，未将该机器路径写入项目依赖。多数旧脚本也支持 `PLAYWRIGHT_BROWSER_CHANNEL`；新增同屏脚本使用 `msedge`。
 
 先构建前端，然后在独立终端启动所需 fixture。它们仅监听本机，使用 `.local/` 下的隔离 SQLite、模拟平台和模型。
+
+来源策略现在不自动授权自定义端口。启动以下浏览器 fixture 的终端需显式设置测试来源（仅用于本机测试，不复制到生产）：
+
+```powershell
+$env:ALLOWED_ORIGINS = 'http://127.0.0.1:8180,http://127.0.0.1:8184,http://127.0.0.1:8185,http://127.0.0.1:8186,http://127.0.0.1:8187'
+$env:ALLOWED_HOSTS = '127.0.0.1,localhost'
+$env:ACCOUNT_COOKIE_SECURE = 'false'
+```
+
+如用 `localhost` 或 `LEARNING_TEST_URL`／`MEMBERSHIP_TEST_APP_URL` 指定其他地址，添加其完整 Origin。独立会员 Mock fixture 的来源规则保持不变；以上仅配置主服务 fixture。
 
 | 终端服务 | 对应脚本 |
 | --- | --- |
