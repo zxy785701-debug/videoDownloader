@@ -1,8 +1,10 @@
 import logging
 import hashlib
+import math
 import secrets
 import sqlite3
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
@@ -14,6 +16,7 @@ from .analysis_store import AnalysisStore
 from .deepseek_client import DeepSeekClient, DeepSeekHTTPPool
 from .membership_client import get_membership_client
 from .asr.service import ASRService
+from .asr.config import ASRUser
 
 logger = logging.getLogger(__name__)
 
@@ -157,9 +160,13 @@ class AnalysisEngine:
         if self.membership and member_session:
             try:
                 account = self.membership.me(member_session)
-                email = account.get("email")
-                if isinstance(email, str) and email:
-                    return hashlib.sha256(("account:" + email.strip().casefold()).encode()).hexdigest()
+                email = account.get("email") if isinstance(account, dict) else None
+                if isinstance(email, str) and email.strip():
+                    quota = account.get("quota")
+                    expiry = quota.get("member_expires") if isinstance(quota, dict) else None
+                    member = type(expiry) in {int, float} and math.isfinite(expiry) and expiry > time.time()
+                    key = hashlib.sha256(("account:" + email.strip().casefold()).encode()).hexdigest()
+                    return ASRUser(key, member=member)
             except AnalysisError:
                 pass
         return peer_key

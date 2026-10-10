@@ -8,6 +8,7 @@ browser cookies, external parsing services, or JavaScript execution are used.
 import json
 import logging
 import re
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,6 +22,7 @@ from .security import validate_public_http_url
 # httpx INFO messages include full signed media URLs under the API's root logger.
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
+logger = logging.getLogger(__name__)
 
 MOBILE_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
@@ -33,6 +35,7 @@ MAX_PAGE_BYTES = 2 * 1024 * 1024
 MAX_VIDEO_BYTES = 1024 * 1024 * 1024
 REDIRECT_CODES = {301, 302, 303, 307, 308}
 VIDEO_ID = re.compile(r"\d{8,24}")
+SHARE_RETRY_DELAYS = (0.5, 1.0)
 
 
 class DouyinError(ValueError):
@@ -226,11 +229,11 @@ def _video_from_item(item: dict, video_id: str) -> DouyinVideo:
 
 def _network_error(error: httpx.HTTPError) -> DouyinError:
     if isinstance(error, httpx.HTTPStatusError) and error.response.status_code in {403, 429}:
-        return DouyinError("抖音暂时拒绝访问或请求过于频繁，请稍后重试并确认本机网络能播放该视频。")
-    return DouyinError("连接抖音超时或中断，请检查本机网络后重试。")
+        return DouyinError("抖音暂时拒绝访问或请求过于频繁，请稍后重试并确认本机网络能播放该视频。", "DOUYIN_ACCESS_DENIED")
+    return DouyinError("连接抖音超时或中断，请检查本机网络后重试。", "DOUYIN_NETWORK_UNAVAILABLE")
 
 
-def resolve_video(url: str) -> DouyinVideo:
+def resolve_video(url: str, *, on_probe: Callable[[dict], None] | None = None) -> DouyinVideo:
     if not is_douyin_url(url):
         raise DouyinError("请提供有效的抖音视频链接。")
     try:
@@ -242,13 +245,35 @@ def resolve_video(url: str) -> DouyinVideo:
             if not video_id:
                 raise DouyinError("未找到抖音作品编号，请复制视频分享链接，勿使用作者主页或直播地址。")
             share_url = f"https://www.iesdouyin.com/share/video/{video_id}/?from_ssr=1"
-            # First response may only set ttwid. Reuse this isolated visitor jar.
-            for _ in range(3):
+            # Visitor state is not always usable immediately after Set-Cookie.
+            # Keep the same isolated jar and allow propagation between requests;
+            # never retry HTTP denials or create unbounded polling here.
+            for attempt in range(len(SHARE_RETRY_DELAYS) + 1):
+                if attempt:
+                    time.sleep(SHARE_RETRY_DELAYS[attempt - 1])
+                started = time.monotonic()
                 with _response(client, share_url, platform_only=True) as response:
-                    item = _item_from_html(_read_page(response), video_id)
+                    page = _read_page(response)
+                    item = _item_from_html(page, video_id)
+                    # Never log page bodies, headers, cookies or media URLs.
+                    observation = {
+                        "attempt": attempt + 1, "http_status": response.status_code,
+                        "page_chars": len(page), "router_data": "_ROUTER_DATA" in page,
+                        "render_data": "RENDER_DATA" in page, "requested_id_present": video_id in page,
+                        "parsed_item": item is not None,
+                        "visitor_cookie_present": any(cookie.name == "ttwid" for cookie in client.cookies.jar),
+                        "seconds": round(time.monotonic() - started, 3),
+                    }
+                logger.info("Douyin share attempt=%d status=%d chars=%d visitor=%s parsed=%s",
+                    observation["attempt"], observation["http_status"], observation["page_chars"],
+                    observation["visitor_cookie_present"], observation["parsed_item"])
+                if on_probe:
+                    on_probe(observation)
                 if item:
                     return _video_from_item(item, video_id)
-            raise DouyinError("抖音分享页未返回视频信息。请确认作品公开可播放，重新复制分享链接或稍后重试。")
+            logger.warning("Douyin share metadata unavailable after bounded retries attempts=%d",
+                           len(SHARE_RETRY_DELAYS) + 1)
+            raise DouyinError("抖音分享页未返回视频信息。请确认作品公开可播放，重新复制分享链接或稍后重试。", "DOUYIN_METADATA_EMPTY")
     except httpx.HTTPError as error:
         raise _network_error(error) from error
 

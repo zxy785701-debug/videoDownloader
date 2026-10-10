@@ -25,6 +25,13 @@ def number(name, default):
 
 
 @dataclass(frozen=True)
+class ASRUser:
+    """Internal identity resolved by the backend, never from a request body."""
+    key: str
+    member: bool = False
+
+
+@dataclass(frozen=True)
 class ASRConfig:
     enabled: bool
     provider: str
@@ -42,6 +49,7 @@ class ASRConfig:
     max_download_bytes: int
     url_ttl: int
     per_user_hour: int
+    member_per_user_hour: int
     threads: int
     base_url: str
     temp_root: Path
@@ -82,6 +90,7 @@ def get_config(runtime_root: Path) -> ASRConfig:
         max_download_bytes=integer("ASR_MAX_DOWNLOAD_MB", 256, 1, 512) * 1024 * 1024,
         url_ttl=integer("ASR_SIGNED_URL_TTL_SECONDS", max(7200, timeout + 300), timeout + 300, 86400),
         per_user_hour=integer("ASR_USER_HOURLY_LIMIT", 3, 1, 100),
+        member_per_user_hour=integer("ASR_MEMBER_HOURLY_LIMIT", 10, 1, 100),
         threads=integer("ASR_FFMPEG_THREADS", 1, 1, 2),
         base_url=setting("ASR_API_BASE", "https://dashscope.aliyuncs.com/api/v1").rstrip("/"),
         temp_root=Path(setting("ASR_TEMP_DIR", str(runtime_root / "asr-tmp"))),

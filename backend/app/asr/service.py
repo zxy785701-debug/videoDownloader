@@ -9,7 +9,7 @@ from contextlib import ExitStack
 from .. import subtitle_service
 from ..analysis_errors import AnalysisError
 from .audio import prepare_audio
-from .config import get_config
+from .config import ASRUser, get_config
 from .network import result_json
 from .providers import AliyunParaformer, RetryableQuery
 from .storage import OSSStorage
@@ -74,6 +74,8 @@ class ASRService:
     def transcribe(self, url, language, user_key, check, stage):
         self.config.require()
         user_key = user_key() if callable(user_key) else user_key
+        member = isinstance(user_key, ASRUser) and user_key.member
+        user_key = user_key.key if isinstance(user_key, ASRUser) else user_key
         deadline = time.monotonic() + self.config.job_timeout
         def bounded_check():
             check()
@@ -92,7 +94,7 @@ class ASRService:
                 stack.close()
                 stage("等待语音转录处理名额")
                 self._sleep(0.5, bounded_check)
-            return self._transcribe(url, language, user_key, bounded_check, stage)
+            return self._transcribe(url, language, user_key, bounded_check, stage, member=member)
 
     def _existing(self, task, directory, metadata, language, check, stage):
         if task["state"] == "ready":
@@ -107,7 +109,7 @@ class ASRService:
             raise AnalysisError(task["error_code"] or "ASR_FAILED", "此前云端识别已失败，未自动提交新的付费任务。请管理员核查原任务。")
         return None
 
-    def _transcribe(self, url, language, user_key, check, stage):
+    def _transcribe(self, url, language, user_key, check, stage, *, member=False):
         video_key = hashlib.sha256((url + ":" + self.config.fingerprint(language)).encode()).hexdigest()
         key = None
         required_disk = self.config.max_download_bytes + self.config.max_audio_bytes + 64 * 1024 * 1024
@@ -147,7 +149,7 @@ class ASRService:
                     result = self._existing(prior, directory, metadata, language, check, stage)
                     if result:
                         return result
-                task = self.store.reserve(key, video_key, duration, user_key, self.config)
+                task = self.store.reserve(key, video_key, duration, user_key, self.config, member=member)
                 self.store.alias(video_key, key, metadata)
                 self.store.update_task(key, metadata=metadata)
                 if task["state"] == "preflight_failed":

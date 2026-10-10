@@ -58,7 +58,7 @@ class ASRStore(AnalysisStore):
             db.execute("INSERT INTO asr_videos(video_key,cache_key,metadata) VALUES(?,?,?) ON CONFLICT(video_key) DO UPDATE SET cache_key=excluded.cache_key,metadata=COALESCE(excluded.metadata,asr_videos.metadata)",
                        (video_key, key, json.dumps(metadata, ensure_ascii=False) if metadata else None))
 
-    def reserve(self, key, video_key, duration, user_key, config):
+    def reserve(self, key, video_key, duration, user_key, config, *, member=False):
         stamp = time.time()
         month = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m")
         estimate = round(duration * config.price_per_second, 6)
@@ -72,8 +72,11 @@ class ASRStore(AnalysisStore):
                 raise AnalysisError("ASR_RETRY_EXHAUSTED", "此前提交被云端拒绝，已达到有限重试上限，请管理员核查配置。")
             count = db.execute("SELECT COALESCE(SUM(MAX(1,calls)),0) FROM asr_tasks WHERE user_key=? AND created>? AND cache_key!=?", (user_key, stamp - 3600, key)).fetchone()[0]
             count += prior["calls"] if prior and prior["created"] > stamp - 3600 else 0
-            if count >= config.per_user_hour:
-                raise AnalysisError("ASR_USER_RATE_LIMIT", "本小时语音转录次数已达上限，请稍后再试。", 429)
+            hourly_limit = config.member_per_user_hour if member else config.per_user_hour
+            if count >= hourly_limit:
+                category = "会员" if member else "普通账号/未核验会话"
+                raise AnalysisError("ASR_USER_RATE_LIMIT",
+                    f"{category}语音转录已达到最近 60 分钟 {hourly_limit} 次上限，请稍后再试。原生字幕和已有转录缓存仍可使用。", 429)
             spent = db.execute("SELECT COALESCE(SUM(reserved_cny),0) FROM asr_tasks WHERE cache_key!=? AND (month=? OR state IN ('submitting','pending','unknown'))", (key, month)).fetchone()[0]
             if config.stop_over_budget and spent + estimate > config.budget:
                 logging.getLogger(__name__).warning("ASR application monthly budget exceeded; new submission blocked")
