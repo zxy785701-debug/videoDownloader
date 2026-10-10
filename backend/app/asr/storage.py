@@ -1,8 +1,8 @@
-import os
 import re
 import logging
 
 from ..analysis_errors import AnalysisError
+from .settings import setting
 
 # SDK INFO/DEBUG diagnostics can contain signed object URLs.
 for _name in ("oss2", "aliyunsdkcore", "alibabacloud_credentials"):
@@ -17,8 +17,8 @@ class OSSStorage:
     def connect(self):
         if self.bucket is not None:
             return self.bucket
-        endpoint = os.getenv("ALIYUN_OSS_ENDPOINT", "https://oss-cn-beijing.aliyuncs.com").rstrip("/")
-        bucket_name = os.getenv("ALIYUN_OSS_BUCKET", "").strip()
+        endpoint = setting("ALIYUN_OSS_ENDPOINT", "https://oss-cn-beijing.aliyuncs.com").rstrip("/")
+        bucket_name = setting("ALIYUN_OSS_BUCKET").strip()
         if not re.fullmatch(r"https://oss-[a-z0-9-]+\.aliyuncs\.com", endpoint) or "-internal" in endpoint:
             raise AnalysisError("ASR_OSS_CONFIG_INVALID", "OSS 需配置公网地域 HTTPS Endpoint。", 409)
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,61}[a-z0-9]", bucket_name):
@@ -32,7 +32,7 @@ class OSSStorage:
                     # Explicit RAM-role/default chain is preferred. Fixed RAM
                     # credentials are an optional fallback, never read from UI.
                     self.client = None
-                    if not os.getenv("ALIYUN_OSS_ACCESS_KEY_ID"):
+                    if not setting("ALIYUN_OSS_ACCESS_KEY_ID").strip():
                         from alibabacloud_credentials.client import Client
                         self.client = Client()
 
@@ -40,8 +40,8 @@ class OSSStorage:
                     if self.client:
                         value = self.client.get_credential()
                         return Credentials(value.access_key_id, value.access_key_secret, value.security_token)
-                    return Credentials(os.environ["ALIYUN_OSS_ACCESS_KEY_ID"],
-                        os.environ["ALIYUN_OSS_ACCESS_KEY_SECRET"], os.getenv("ALIYUN_OSS_SECURITY_TOKEN"))
+                    return Credentials(setting("ALIYUN_OSS_ACCESS_KEY_ID").strip(),
+                        setting("ALIYUN_OSS_ACCESS_KEY_SECRET").strip(), setting("ALIYUN_OSS_SECURITY_TOKEN").strip() or None)
 
             region = endpoint.removeprefix("https://oss-").removesuffix(".aliyuncs.com")
             bucket = oss2.Bucket(oss2.ProviderAuthV4(Provider()), endpoint, bucket_name,

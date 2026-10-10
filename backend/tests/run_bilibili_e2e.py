@@ -1,6 +1,6 @@
 """Explicit real Bilibili -> ASR -> LLM -> browser acceptance, no cloud mocks.
 
-Run from the credential-configured shell via test-bilibili-e2e.ps1. The isolated
+Run via test-bilibili-e2e.ps1 with process or project-root .env credentials. Isolated
 learning databases share the FIRST live ASR ledger; nothing is reset or deleted.
 """
 import argparse

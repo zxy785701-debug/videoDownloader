@@ -1,4 +1,4 @@
-// UI acceptance of the real outputs created by run_bilibili_e2e.py.
+// UI acceptance of real outputs created by Bilibili/Douyin learning runners.
 // Only the exact video's free metadata POST is allowed; model and other writes
 // remain blocked. Paid calls happen only in the Python flow.
 const { chromium } = require('playwright')
@@ -13,8 +13,9 @@ const flatten = node => [node, ...(node.children || []).flatMap(flatten)]
 
 ;(async () => {
   assert.ok(recordId && output)
-  const expectedUrl = JSON.parse(await fs.readFile(path.join(output, 'report.json'), 'utf8')).url
-  assert.equal(new URL(expectedUrl).hostname, 'www.bilibili.com')
+  const acceptance = JSON.parse(await fs.readFile(path.join(output, 'report.json'), 'utf8'))
+  const expectedUrl = acceptance.url
+  assert.equal(new URL(expectedUrl).hostname, acceptance.platform === 'Douyin' ? 'www.douyin.com' : 'www.bilibili.com')
   const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_BROWSER_CHANNEL || 'msedge', headless: true })
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, acceptDownloads: true, reducedMotion: 'reduce' })
   await context.route('**/api/v1/**', route => {
@@ -111,7 +112,7 @@ const flatten = node => [node, ...(node.children || []).flatMap(flatten)]
     await page.locator('.summary-overview h3').waitFor()
     await page.getByRole('button', { name: '视频问答', exact: true }).click()
     assert.equal(await page.locator('.chat-turn').count(), messages.length)
-    report.checks.saved_chat_restored = true
+    report.checks[messages.length ? 'saved_chat_restored' : 'empty_chat_restored'] = true
     assert.equal(report.blocked_api_writes, 0)
     assert.equal(report.page_errors, 0)
     report.last_stage = 'complete'

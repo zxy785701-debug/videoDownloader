@@ -60,7 +60,7 @@ try {
     } elseif ($env:DASHSCOPE_API_KEY) {
         Write-Host 'Bailian/DashScope ASR key is present in the process environment (not cloud-validated). Private OSS bucket and credentials are also required; see docs/ASR_FALLBACK.md.'
     } else {
-        Write-Host 'Cloud ASR fallback needs DASHSCOPE_API_KEY in the process environment and private OSS configuration. ASR does not read project-root .env; see docs/ASR_FALLBACK.md.'
+        Write-Host 'Backend also checks project-root .env for DASHSCOPE_API_KEY, private OSS and ASR settings. Process environment overrides .env; see docs/ASR_FALLBACK.md.'
     }
     if ($env:VIDEO_LEARNING_FIREFOX_SESSION -in @('1', 'true')) { Write-Host 'Firefox session is explicitly enabled for Bilibili/Douyin captions only.' }
     & $pythonPath -m uvicorn app.main:app --app-dir (Join-Path $PSScriptRoot 'backend') --host 127.0.0.1 --port $Port

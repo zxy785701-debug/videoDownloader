@@ -9,7 +9,7 @@ import json
 import logging
 import re
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 from urllib.parse import parse_qs, unquote, urljoin, urlsplit, urlunsplit
@@ -38,6 +38,10 @@ VIDEO_ID = re.compile(r"\d{8,24}")
 class DouyinError(ValueError):
     """Safe, actionable messages without upstream URLs or cookie values."""
 
+    def __init__(self, message: str, code: str = "DOUYIN_UNAVAILABLE"):
+        super().__init__(message)
+        self.code = code
+
 
 @dataclass(frozen=True)
 class DouyinVideo:
@@ -48,6 +52,7 @@ class DouyinVideo:
     duration: float | None
     width: int | None
     height: int | None
+    subtitles: dict = field(default_factory=dict, repr=False)
 
     @property
     def resolution(self) -> str | None:
@@ -156,9 +161,50 @@ def _play_url(url: str) -> str:
     return url
 
 
+def _subtitles_from_item(item: dict) -> dict:
+    """Only explicit subtitle resources, never description/comments/music text.
+
+    Match the caption resource schemas supported by yt-dlp's TikTokBaseIE;
+    actual retrieval/format validation stays in the existing subtitle service.
+    """
+    video = item["video"]
+    subtitles = {}
+    extensions = {"srt": "srt", "webvtt": "vtt", "creator_caption": "json"}
+
+    def entries(value):
+        return value if isinstance(value, list) else []
+
+    def extension(value):
+        return extensions.get(value) if isinstance(value, str) else None
+
+    def add(language, url, extension):
+        if isinstance(url, str) and extension in {"srt", "vtt", "json"}:
+            language = language if isinstance(language, str) and language else "zh-Hans"
+            resource = {"url": url, "ext": extension}
+            resources = subtitles.setdefault(language, [])
+            if resource not in resources:
+                resources.append(resource)
+
+    for caption in entries(video.get("subtitleInfos")):
+        if isinstance(caption, dict):
+            add(caption.get("LanguageCodeName"), caption.get("Url"), extension(caption.get("Format")))
+    cla_info = video.get("cla_info")
+    for caption in entries(cla_info.get("caption_infos")) if isinstance(cla_info, dict) else []:
+        if isinstance(caption, dict):
+            add(caption.get("lang"), caption.get("url"), extension(caption.get("Format")))
+    for sticker in entries(item.get("interaction_stickers")):
+        info = sticker.get("auto_video_caption_info") if isinstance(sticker, dict) else None
+        for caption in entries(info.get("auto_captions")) if isinstance(info, dict) else []:
+            if isinstance(caption, dict):
+                resource = caption.get("url")
+                for url in entries(resource.get("url_list")) if isinstance(resource, dict) else []:
+                    add(caption.get("language"), url, "json")
+    return subtitles
+
+
 def _video_from_item(item: dict, video_id: str) -> DouyinVideo:
     if item.get("images"):
-        raise DouyinError("这个抖音链接是图集，目前只支持视频。请换用视频作品链接。")
+        raise DouyinError("这个抖音链接是图集，目前只支持视频。请换用视频作品链接。", "DOUYIN_IMAGE_POST")
     video = item["video"]
     media_urls = tuple(dict.fromkeys(_play_url(url) for url in _urls(video.get("play_addr"))))
     if not media_urls:
@@ -174,6 +220,7 @@ def _video_from_item(item: dict, video_id: str) -> DouyinVideo:
         duration=milliseconds / 1000 if milliseconds else None,
         width=int(width) if width else None,
         height=int(height) if height else None,
+        subtitles=_subtitles_from_item(item),
     )
 
 

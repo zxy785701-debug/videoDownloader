@@ -7,6 +7,8 @@ import logging
 import math
 import re
 from contextlib import contextmanager
+from http.cookiejar import CookieJar
+from types import SimpleNamespace
 from urllib.parse import parse_qs, urlencode, urljoin, urlsplit, urlunsplit
 
 import httpx
@@ -271,10 +273,32 @@ def _caption_downloader(options: dict, optional_firefox: bool, platform: str = '
         yield client
 
 
+@contextmanager
+def _transcript_source(url, platform, options, optional_firefox):
+    if platform == "Douyin" and not optional_firefox:
+        # Reuse the working anonymous download adapter instead of the web detail
+        # API that requires fresh browser cookies. No login cookies are read.
+        try:
+            video = douyin.resolve_video(url)
+        except douyin.DouyinError as error:
+            if error.code == "DOUYIN_IMAGE_POST":
+                raise AnalysisError("SINGLE_VIDEO_REQUIRED", str(error)) from error
+            raise AnalysisError("CAPTIONS_FETCH_FAILED", str(error)) from error
+        except HTTPException as error:
+            raise AnalysisError("URL_INVALID", "抖音分享链接未通过公网安全校验。", 400) from error
+        yield {"id": video.video_id, "title": video.title, "duration": video.duration,
+               "extractor_key": "Douyin", "subtitles": video.subtitles,
+               "http_headers": douyin.MOBILE_HEADERS}, SimpleNamespace(params={}, cookiejar=CookieJar())
+        return
+    # Preserve explicit Firefox subtitle sessions and both other platforms.
+    with _caption_downloader(options, optional_firefox, platform) as ydl:
+        yield ydl.extract_info(url, download=False), ydl
+
+
 def extract_transcript(url: str, requested_language: str = "auto", config: AIConfig | None = None, on_metadata=None) -> dict:
     config = config or get_config()
     platform, safe_url = platform_url(url)
-    if platform == "Douyin" and not douyin.extract_video_id(safe_url):
+    if platform == "Douyin" and config.firefox_subtitle_session and not douyin.extract_video_id(safe_url):
         try:
             video = douyin.resolve_video(safe_url)
             safe_url = "https://www.douyin.com/video/" + video.video_id
@@ -291,8 +315,7 @@ def extract_transcript(url: str, requested_language: str = "auto", config: AICon
     if optional_firefox:
         options["cookiesfrombrowser"] = ("firefox", config.firefox_subtitle_profile)
     try:
-        with _caption_downloader(options, optional_firefox, platform) as ydl:
-            info = ydl.extract_info(safe_url, download=False)
+        with _transcript_source(safe_url, platform, options, optional_firefox) as (info, ydl):
             if not isinstance(info, dict) or info.get("_type") in {"playlist", "multi_video"}:
                 raise AnalysisError("SINGLE_VIDEO_REQUIRED", "请提供单个视频或明确的 B 站分 P 链接。")
             if info.get("is_live") or info.get("live_status") in {"is_live", "is_upcoming", "post_live"}:
@@ -313,7 +336,7 @@ def extract_transcript(url: str, requested_language: str = "auto", config: AICon
                     raise AnalysisError("CAPTIONS_ACCESS_REQUIRED", message)
                 if caption_logger.fetch_failed:
                     raise AnalysisError("CAPTIONS_FETCH_FAILED", "字幕信息获取受阻，请检查网络或稍后重试。")
-                raise AnalysisError("NO_CAPTIONS", "没有可提取的平台字幕，暂不能总结；你仍可下载视频。语音转录后续支持。")
+                raise AnalysisError("NO_CAPTIONS", "没有可提取的平台字幕；需要服务端启用语音转录后才能总结，视频下载仍可使用。")
             selected = choose_track(tracks, requested_language, info.get("language"))
             formats = {"srt": 0, "vtt": 1, "webvtt": 1, "json3": 2, "json": 3, "bcc": 3}
             errors = []

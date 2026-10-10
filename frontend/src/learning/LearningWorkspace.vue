@@ -358,7 +358,7 @@ async function parseVideo() {
   const expected = revision
   window.history.replaceState(null, '', '#top')
   if (!await download.parse(submitted) || expected !== revision || disposed) return
-  if (!supportsLearning(submitted)) { learningUnavailable.value = '该平台可下载视频，暂不支持获取字幕与 AI 总结。目前支持 B 站、抖音和 YouTube 的有效平台字幕。'; return }
+  if (!supportsLearning(submitted)) { learningUnavailable.value = '该平台可下载视频，暂不支持 AI 总结。目前支持 B 站、抖音和 YouTube；没有可用字幕时，可使用服务端开启的语音转录。'; return }
   await loadConfig()
   if (expected !== revision || disposed) return
   await createRecord(submitted, 'auto', automatic && !!config.value?.configured && config.value?.auto_summary_version === 1 && summaryCompatible.value)
@@ -500,7 +500,7 @@ onBeforeUnmount(() => {
         <div class="workspace-preferences"><label><input v-model="autoSummary" type="checkbox" />解析后自动总结</label><span>{{ autoSummary ? '有可用字幕时调用 DeepSeek；已保存的摘要会直接复用' : '仅获取视频信息与字幕，可手动生成总结' }}</span><button v-if="workspaceActive" class="workspace-reset" type="button" :disabled="downloadBusy" @click="newRecord">换个链接</button></div>
         <p v-if="downloadBusy" class="learning-muted" role="status">下载处理中，完成后可切换视频；仍可查看摘要、字幕、导图和问答。</p>
         <div v-if="!workspaceActive" class="hero-platforms" aria-label="常见视频平台"><span>支持平台</span><span>YouTube</span><span>Bilibili</span><span>抖音</span></div>
-        <p id="supported-platforms" class="workspace-platforms">视频下载：支持多个平台 · AI 总结：B 站、抖音、YouTube 的平台字幕</p>
+        <p id="supported-platforms" class="workspace-platforms">视频下载：支持多个平台 · AI 总结：B 站、抖音、YouTube · 字幕优先，无字幕时使用语音转录（需服务端开启）</p>
         <p v-if="parseError" id="input-error" class="learning-alert" role="alert">{{ parseError }}</p>
         <p v-if="notice && !workspaceActive" class="learning-notice" role="status">{{ notice }}</p>
       </section>

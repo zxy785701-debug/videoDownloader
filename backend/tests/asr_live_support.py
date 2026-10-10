@@ -17,6 +17,7 @@ from app.analysis_errors import AnalysisError
 from app.asr.network import PinnedHTTPS, download
 from app.asr.providers import AliyunParaformer
 from app.asr.service import ASRService
+from app.asr.settings import setting
 from app.asr.temporary import file_slot
 
 
@@ -209,8 +210,8 @@ def _run_live_check(source, root):
         report["audio"] = inspect_audio(source)
         service = ASRService(root)
         report["recognition_fingerprint"] = service.config.fingerprint("auto")
-        report["target"] = {"bucket": os.getenv("ALIYUN_OSS_BUCKET", "").strip(),
-                            "endpoint": os.getenv("ALIYUN_OSS_ENDPOINT", "https://oss-cn-beijing.aliyuncs.com").rstrip("/"),
+        report["target"] = {"bucket": setting("ALIYUN_OSS_BUCKET").strip(),
+                            "endpoint": setting("ALIYUN_OSS_ENDPOINT", "https://oss-cn-beijing.aliyuncs.com").rstrip("/"),
                             "api_base": service.config.base_url}
         try:
             previous = json.loads(report_path.read_text(encoding="utf-8"))

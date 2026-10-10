@@ -14,9 +14,26 @@
 
 ## Key 应写在哪里
 
-百炼 Key 的名称是 `DASHSCOPE_API_KEY`，必须存在于 **Python 主后端进程的环境变量**。当前 ASR 配置不读取项目根目录 `.env`，也不读取前端输入。原来的 DeepSeek `.env` 读取行为不变。
+百炼 Key、OSS 凭证及下表 ASR 参数支持 **项目根目录 `.env`**，也继续支持 Python 主后端进程的环境变量。读取顺序为：进程环境变量（包括显式空值）→ 根目录 `.env` → 默认值。只读取服务端白名单，不向进程环境全局注入、不读取网页输入；原来的 DeepSeek 配置行为不变。
 
-宝塔有 Python 项目环境变量设置时，在其中添加变量名和真实值，并在部署获准后重启主后端。请勿把真实 Key 填入 `.env.example`、`VITE_*`、前端代码、仓库文档或聊天消息。
+本地在 `D:\nbproject\videoDownloader\.env` 追加或修改下面的配置。已有 DeepSeek、访问控制等配置应保留，不要用模板覆盖整份文件。仅在自己的文件中填写真实值，保存为 UTF-8；下方空值仅为示例：
+
+```dotenv
+ASR_ENABLED=true
+ASR_PROVIDER=aliyun_paraformer
+ASR_MODEL=paraformer-v2
+DASHSCOPE_API_KEY=
+ALIYUN_OSS_BUCKET=saveany-videodownloader
+ALIYUN_OSS_ENDPOINT=https://oss-cn-beijing.aliyuncs.com
+ALIYUN_OSS_ACCESS_KEY_ID=
+ALIYUN_OSS_ACCESS_KEY_SECRET=
+# 仅使用 STS 临时凭证时填写，固定 RAM AccessKey 留空。
+ALIYUN_OSS_SECURITY_TOKEN=
+```
+
+百炼 Key 填入 `DASHSCOPE_API_KEY`；专用 RAM 用户的 AccessKey ID/Secret 分别填写两个 `ALIYUN_OSS_ACCESS_KEY_*`。ECS 角色方式应同时省略/留空这两项，由官方 SDK 默认凭证链处理，SDK 自身的角色配置仍按官方规范放在进程环境或 SDK 凭证文件中。STS 临时凭证需同时填写 ID、Secret 和 Token，到期后更新。
+
+`.env` 已被 Git 忽略，前端只使用构建后的静态目录。服务器上的 `.env` 应仅服务用户可读，不得置于对外静态目录。请勿把真实 Key 填入 `.env.example`、`VITE_*`、前端代码、仓库文档或聊天消息。宝塔仍可在 Python 项目环境变量中配置；这会覆盖 `.env` 中同名值。
 
 本地 PowerShell 可隐藏输入，随后在同一窗口启动后端：
 
@@ -27,11 +44,13 @@ $env:ASR_ENABLED = 'true'
 ./start-local.ps1
 ```
 
-Shell 设置的变量不会注入已经运行的 Python，必须重新启动自己的本地后端。百炼 Key 应属于北京地域，并具有 Paraformer-v2 权限。
+修改 `.env` 或 Shell 变量后，需重新启动自己的本地后端；配置在 Python 启动时读取。已经用 PowerShell 设置过同名变量时，它们仍优先；切换为文件配置可关闭旧窗口，使用未设置这些变量的新窗口启动。不要打印环境变量确认密钥。百炼 Key 应属于北京地域，并具有 Paraformer-v2 权限。
+
+可在 `backend` 目录运行 `.venv\Scripts\python.exe -m app.asr.settings` 做不联网的配置存在性检查：只输出缺少的变量名称，不输出密钥、不读取账本、不提交云任务。检查通过不代表凭证或云权限已验证。
 
 ## 所有环境变量
 
-除明确说明外，以下均读取主进程环境变量；修改后重启后端。
+下表各项均支持主进程环境变量和项目根目录 `.env`；进程环境优先，修改后重启后端。真实付费测试的 `ASR_RUN_*` 授权开关不从 `.env` 读取，填写密钥不会自动触发测试。
 
 | 名称 | 默认值 | 作用 |
 | --- | --- | --- |
@@ -125,10 +144,10 @@ cd /www/wwwroot/videoDownloader/backend
    .venv/bin/python -m pip install -r requirements.txt -r requirements-asr.txt
    ```
    云存储依赖单独提供；没有安装时原生字幕与下载仍可工作，ASR 返回依赖未安装错误。继续使用现有 FFmpeg/imageio-ffmpeg；无需 GPU、PyTorch、FunASR、Redis 或新端口。
-3. 在宝塔主进程环境中配置上述变量、私有 OSS 和凭证；保留 `BILIBILI_METADATA_SOURCE=api` 及现有 Cookie、DeepSeek、访问域名配置。不要复制示例中的空白 Key 覆盖真实配置。
+3. 在宝塔主进程环境或服务器项目根目录受保护的 `.env` 中配置上述 ASR 变量、私有 OSS 和凭证；保留 `BILIBILI_METADATA_SOURCE=api` 及现有 Cookie、DeepSeek、访问域名配置。`BILIBILI_METADATA_SOURCE` 等下载参数仍按原规则放在进程环境，此次不扩展下载配置读取范围。不要复制示例中的空白 Key 覆盖真实配置。
 4. 本次有字幕来源标签变更，在开发/构建环境执行 `npm run build --prefix frontend`，发布得到的原有 `frontend/dist`，沿用当前静态资源部署方式。
 5. 使用原有宝塔 Python 管理器或 Supervisor 重启同一个主服务，端口保持 **8000**，worker 为 1。不要再启动一个争用 8000 的服务。无需修改 Nginx。
-6. 管理器不能配置环境时，可用受保护的 `/etc/video-downloader/asr.env`（管理员创建、0600、仓库外），由启动器加载。下方 Supervisor 配置仅示例，路径/用户必须按服务器实际环境替换，并与现有启动方式二选一：
+6. 使用项目根目录 `.env` 时由后端自动读取，现有启动命令无需变更。也可继续用受保护的 `/etc/video-downloader/asr.env`（管理员创建、0600、仓库外），由启动器加载为进程环境。下方 Supervisor 配置仅适用于后一种方式，路径/用户必须按服务器实际环境替换，并与现有启动方式二选一：
    ```ini
    [program:video-downloader]
    directory=/www/wwwroot/videoDownloader/backend
@@ -157,11 +176,11 @@ Pop-Location
 npm.cmd run build --prefix frontend
 ```
 
-真实集成入口为 `backend/tests/test_asr_live.py`，默认跳过。只有管理员显式设置 `ASR_RUN_LIVE_TESTS=1`、真实百炼/OSS 环境变量及 `ASR_LIVE_AUDIO_PATH` 指向含清晰讲话的 **30 秒以内、2 MiB 以下、16kHz 单声道 FLAC** 时才会上传并产生可能的计费。不代表所有视频平台音频提取已获得真实验证。
+真实集成入口为 `backend/tests/test_asr_live.py`，默认跳过。只有管理员显式设置进程变量 `ASR_RUN_LIVE_TESTS=1`、百炼/OSS 凭证已配置在进程环境或根目录 `.env`，且 `ASR_LIVE_AUDIO_PATH` 指向含清晰讲话的 **30 秒以内、2 MiB 以下、16kHz 单声道 FLAC** 时才会上传并产生可能的计费。不代表所有视频平台音频提取已获得真实验证。
 
 ### 第一次真实测试：本地 PowerShell
 
-在已经配置凭证的同一 PowerShell 窗口运行，不需要启动网站或重启后端：
+在已经配置进程凭证的同一 PowerShell 窗口运行；若凭证已写入根目录 `.env`，可从新窗口运行。不需要启动网站或重启后端，脚本本身会发起真实付费测试，须已有对应授权：
 
 ```powershell
 cd D:\nbproject\videoDownloader
@@ -171,7 +190,7 @@ $env:ALIYUN_OSS_ENDPOINT = 'https://oss-cn-beijing.aliyuncs.com'
 .\test-asr-live.ps1
 ```
 
-启动器只检查 `DASHSCOPE_API_KEY`、`ALIYUN_OSS_BUCKET`、`ALIYUN_OSS_ENDPOINT`、`ALIYUN_OSS_ACCESS_KEY_ID`、`ALIYUN_OSS_ACCESS_KEY_SECRET` 是否存在，不输出值。STS 另需 `ALIYUN_OSS_SECURITY_TOKEN`。这是针对本地专用 RAM 用户的启动器；生产环境仍优先使用默认凭证链/角色。缺少凭证时，使用本文前面的 `Read-Host -AsSecureString` 方式设置；不要打印环境变量、使用 `--showlocals` 或粘贴含凭证的截图。
+启动器通过 Python 统一读取进程/文件配置，仅检查百炼 Key、Bucket 是否存在和固定 ID/Secret 是否成对，不输出值、不联网验证。Endpoint 默认北京；两个固定 Key 都未配置时，允许后续 SDK 使用角色/默认凭证链，预检查不会提前获取角色凭证。STS 另需 `ALIYUN_OSS_SECURITY_TOKEN`。缺少凭证时可填写本机 `.env` 或使用本文前面的隐藏输入方式；不要打印环境变量、使用 `--showlocals` 或粘贴含凭证的截图。
 
 启动器为测试子进程设置 `ASR_RUN_LIVE_TESTS=1`、音频绝对路径和 `ASR_LIVE_WORK_DIR`，退出时恢复这些非敏感变量。测试只在进程内设置启用 ASR、300 秒总超时、900 秒签名有效期及隔离临时目录，不修改服务配置文件或线上环境。每次运行最多提交一个新的付费任务；20 秒音频按项目当前估价约 ¥0.0016，未含 OSS/流量，也不是实际账单金额。
 

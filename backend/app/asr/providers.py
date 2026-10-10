@@ -1,10 +1,10 @@
-import os
 import re
 from abc import ABC, abstractmethod
 
 import httpx
 
 from ..analysis_errors import AnalysisError
+from .settings import setting
 
 
 class RetryableQuery(AnalysisError):
@@ -25,10 +25,13 @@ class AliyunParaformer(ASRProvider):
         self.config = config
 
     def _request(self, method, path, **kwargs):
+        api_key = setting("DASHSCOPE_API_KEY").strip()
+        if not api_key:
+            raise AnalysisError("ASR_NOT_CONFIGURED", "请管理员在服务端环境变量或项目根目录 .env 配置 DASHSCOPE_API_KEY。", 409)
         with httpx.Client(timeout=httpx.Timeout(30, connect=10), follow_redirects=False,
                           trust_env=False) as client:
             return client.request(method, self.config.base_url + path,
-                headers={"Authorization": "Bearer " + os.environ["DASHSCOPE_API_KEY"].strip(),
+                headers={"Authorization": "Bearer " + api_key,
                          "X-DashScope-Async": "enable"}, **kwargs)
 
     def submit(self, audio_url, language):

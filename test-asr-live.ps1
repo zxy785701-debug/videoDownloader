@@ -11,15 +11,7 @@ if (-not (Test-Path -LiteralPath $AudioPath -PathType Leaf)) {
     throw 'Test FLAC file was not found.'
 }
 
-# Check presence only. Never print credentials, environment dumps or HTTP bodies.
-$taskRequired = @('DASHSCOPE_API_KEY', 'ALIYUN_OSS_BUCKET', 'ALIYUN_OSS_ENDPOINT',
-                  'ALIYUN_OSS_ACCESS_KEY_ID', 'ALIYUN_OSS_ACCESS_KEY_SECRET')
-$taskMissing = @($taskRequired | Where-Object {
-    [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_, 'Process'))
-})
-if ($taskMissing.Count -gt 0) {
-    throw ('Missing process environment variable names: ' + ($taskMissing -join ', '))
-}
+# Python checks process/.env settings without returning secret values to PowerShell.
 
 $taskOverrides = @{
     ASR_RUN_LIVE_TESTS = '1'
@@ -32,10 +24,12 @@ foreach ($taskName in $taskOverrides.Keys) {
 }
 
 Write-Host 'Real PAID test: private OSS + Beijing Paraformer-v2. Audio limit: 30 seconds.'
-Write-Host 'Credentials are inherited from this PowerShell process and are never printed.'
+Write-Host 'Server credentials come from process environment or project-root .env and are never printed.'
 Write-Host 'Keep .local/asr-live-first/asr.sqlite3 across retries to prevent duplicate billing.'
 Push-Location (Join-Path $PSScriptRoot 'backend')
 try {
+    & $taskPython -m app.asr.settings
+    if ($LASTEXITCODE -ne 0) { throw 'ASR configuration is incomplete; only missing variable names were printed.' }
     foreach ($taskName in $taskOverrides.Keys) {
         [Environment]::SetEnvironmentVariable($taskName, $taskOverrides[$taskName], 'Process')
     }

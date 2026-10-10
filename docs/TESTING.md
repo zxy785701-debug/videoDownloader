@@ -2,6 +2,10 @@
 
 更新日期：2026-10-10。工作区完整验证见 [同屏验收报告](UNIFIED_VIDEO_WORKSPACE_TEST_REPORT.md)，最新公开页面扩展见 [SEO／GEO 验证](SEO_GEO_TEST_REPORT.md)。以下命令从仓库根目录执行，测试与正式本机服务使用不同端口和数据库。
 
+ASR 根目录 `.env` 支持后的完整后端回归：**616 passed、1 skipped，198.15 秒**；专项 **107 passed，12.65 秒**；4 个 PowerShell 启动器语法检查通过。新增 13 项使用假凭证的配置测试，覆盖文件白名单、UTF-8 BOM、禁止变量插值、进程值/显式空值优先、凭证不改变缓存身份、Mock 百炼请求头、Mock 私有 OSS 签名、角色凭证链和不泄露值的配置预检查。5 条提示来自既有 Starlette/httpx 与 OSS SDK 弃用用法。测试隔离原学习数据库与 `.env` 文件配置，显式关闭真实 ASR opt-in；本轮没有真实云端调用、密钥迁移或生产重启。配置方式见 [ASR 配置](ASR_FALLBACK.md#key-应写在哪里)。
+
+抖音 AI 总结扩展后的完整回归为 **603 passed、1 skipped，80.61 秒**，新增 18 项抖音学习测试，相关抖音/ASR/Firefox 专项 **155 passed**，前端 TypeScript/Vite 构建通过。用户指定的 148 秒抖音视频已完成真实端到端验收：无原生字幕后自动 ASR，1 次提交、2 次查询、20 条字幕、1 次真实摘要模型调用，浏览器导图与导出通过。旧账本保留；没有新增真实问答调用或部署宝塔。详细耗时、费用估算、内存与范围见 [抖音 AI 总结报告](DOUYIN_AI_SUMMARY.md)。
+
 Mock 同源支付修复后的最新完整后端回归为 **585 passed、1 skipped，124.60 秒**，3 条既有依赖弃用提示；跳过项为显式启用的真实云测试。新增 24 项后端回归，相关账号/来源/支付专项 **172 passed**；真实本机三层 HTTP 代理与 Edge 浏览器 **32 项通过**，前端 TypeScript/Vite 构建通过。没有真实付款或阿里云 Nginx/SSH 验收，配置、修改文件及部署步骤见 [Mock SSH 修复报告](MOCK_CHECKOUT_SSH.md)。
 
 此前 ASR 音频备用地址修复时完整后端为 **561 passed、1 skipped，132.03 秒**，并对用户指定 `BV1N2pc6gErK` 真实完成匿名音频提取及 FFmpeg 转换，没有调用 OSS、付费 ASR 或 LLM；证据与生产更新步骤见 [CDN 备用地址修复报告](ASR_CDN_FALLBACK_FIX.md)。

@@ -10,6 +10,8 @@ import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+from fastapi import HTTPException
+
 from .. import douyin, video_service
 from ..analysis_errors import AnalysisError
 from ..subtitle_service import platform_url
@@ -108,9 +110,15 @@ def prepare(request, directory):
         if parsed.hostname != "www.youtube.com" or parsed.path != "/watch" or not re.fullmatch(r"[\w-]{6,32}", parse_qs(parsed.query).get("v", [""])[0]):
             raise AnalysisError("ASR_AUDIO_UNAVAILABLE", "请提供 YouTube 单个视频的标准链接。")
     if platform == "Douyin":
-        video = douyin.resolve_video(safe_url)
+        try:
+            video = douyin.resolve_video(safe_url)
+        except douyin.DouyinError as error:
+            raise AnalysisError("ASR_AUDIO_UNAVAILABLE", str(error)) from error
+        except HTTPException as error:
+            raise AnalysisError("ASR_URL_UNSAFE", "抖音分享链接未通过公网安全校验，未提交付费转录。") from error
         info = {"id": video.video_id, "title": video.title, "duration": video.duration,
-                "url": video.media_urls[0], "http_headers": douyin.MOBILE_HEADERS}
+                "url": video.media_urls[0], "_platform_backup_urls": video.media_urls[1:],
+                "http_headers": douyin.MOBILE_HEADERS}
         selected = info
     else:
         options = video_service._video_options(source_url=safe_url, skip_download=True,

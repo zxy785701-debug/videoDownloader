@@ -8,7 +8,7 @@ import yt_dlp.cookies as browser_cookies
 from yt_dlp.utils import DownloadError
 from yt_dlp.cookies import YoutubeDLCookieJar as CookieJar
 
-from app import subtitle_service, video_service
+from app import douyin, subtitle_service, video_service
 from app.ai_config import get_config
 from app.analysis_errors import AnalysisError
 
@@ -20,6 +20,7 @@ SUBTITLES = {'id': 'sample', 'duration': 60, 'subtitles': {'zh': [
 @pytest.fixture(autouse=True)
 def no_network(monkeypatch):
     monkeypatch.setattr(subtitle_service, 'validate_public_http_url', lambda value: value)
+    monkeypatch.setattr(douyin, 'resolve_video', lambda *a: pytest.fail('unexpected live Douyin request'))
 
 
 @pytest.mark.parametrize('url', URLS)
@@ -75,6 +76,11 @@ def test_local_firefox_session_remains_in_memory_for_captions(monkeypatch, url):
 def test_server_anonymous_mode_never_reads_browser(monkeypatch, url):
     monkeypatch.setattr(browser_cookies, 'extract_cookies_from_browser', lambda *a, **kw: pytest.fail('browser must not be read'))
     monkeypatch.setattr(subtitle_service.YoutubeDL, 'extract_info', lambda *a, **kw: SUBTITLES)
+    # Anonymous Douyin now uses the existing share-page download adapter.
+    # Keep this regression offline while retaining the browser-read assertion.
+    monkeypatch.setattr(douyin, 'resolve_video', lambda _: douyin.DouyinVideo(
+        'sample', '模拟视频', ('https://cdn.example/video.mp4',), None, 60, 720, 1280,
+        SUBTITLES['subtitles']))
     result = subtitle_service.extract_transcript(url, config=replace(get_config(), firefox_subtitle_session=False))
     assert result['cues'][0]['text'] == '模拟字幕'
 
