@@ -1,6 +1,13 @@
 import hashlib
 import hmac
+import re
 import secrets
+
+
+def mock_checkout_path(session_id: str) -> str:
+    if not isinstance(session_id, str) or not re.fullmatch(r"cs_test_mock_[A-Za-z0-9_-]{32}", session_id):
+        raise ValueError("Invalid mock checkout session")
+    return "/dev/checkout/" + session_id
 
 
 def digest(value: str) -> str:

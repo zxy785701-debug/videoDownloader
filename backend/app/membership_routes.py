@@ -2,6 +2,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.concurrency import run_in_threadpool
 
 from .analysis_errors import AnalysisError
 from .analysis_routes import local_access
@@ -9,6 +10,7 @@ from .membership_client import COOKIE, get_membership_client
 
 
 router = APIRouter(prefix="/api/v1/account", dependencies=[Depends(local_access)], tags=["本机账号代理"])
+mock_checkout_router = APIRouter(dependencies=[Depends(local_access)], include_in_schema=False)
 
 
 class AccountBody(BaseModel):
@@ -27,6 +29,19 @@ def client():
 
 def actor(request: Request):
     return request.cookies.get(COOKIE)
+
+
+@mock_checkout_router.api_route("/dev/checkout/{session_id}", methods=["GET", "POST"])
+async def mock_checkout_page(session_id: str, request: Request):
+    body = bytearray()
+    async for block in request.stream():
+        body.extend(block)
+        if len(body) > 2048:
+            raise AnalysisError("INPUT_INVALID", "模拟支付请求过大。", 413)
+    status, content, headers = await run_in_threadpool(client().mock_checkout_page,
+        session_id, actor(request), request.method, bytes(body), request.headers)
+    headers["cache-control"] = "no-store"
+    return Response(content, status_code=status, headers=headers)
 
 
 @router.get("/config")

@@ -3,6 +3,7 @@ from pathlib import Path
 from contextlib import contextmanager
 from datetime import datetime
 import os
+import re
 import secrets
 import sqlite3
 import ssl
@@ -97,6 +98,37 @@ class MembershipClient:
         if not row:
             raise AnalysisError("LOGIN_REQUIRED", "请先在会员窗口登录，再生成新的 AI 总结。", 401)
         return dict(row)
+
+    def mock_checkout_page(self, session_id, local_session, method, body, browser_headers):
+        """Relay one authenticated mock page; never expose a general billing proxy."""
+        if method not in {"GET", "POST"} or not re.fullmatch(r"cs_test_mock_[A-Za-z0-9_-]{32}", session_id):
+            raise AnalysisError("ORDER_NOT_FOUND", "模拟订单不存在。", 404)
+        access = self.session(local_session)["access"]
+        headers = {"Authorization": "Bearer " + access}
+        # Origin is checked by both services. Never copy browser cookies, Host,
+        # Authorization or forwarded headers to the private membership service.
+        for name in ("origin", "content-type", "sec-fetch-site"):
+            if name in browser_headers:
+                headers[name] = browser_headers[name]
+        try:
+            request = httpx.Request(method, self.url + "/dev/checkout/" + session_id,
+                                    content=body, headers=headers)
+            response = self.transport().send(request, stream=True, follow_redirects=False)
+            try:
+                if response.is_redirect:
+                    raise ValueError("Unexpected mock checkout redirect")
+                content = bytearray()
+                for block in response.iter_bytes(chunk_size=8192):
+                    content.extend(block)
+                    if len(content) > 65536:
+                        raise ValueError("Mock checkout response too large")
+                allowed = ("content-type", "cache-control", "x-robots-tag", "x-content-type-options",
+                           "referrer-policy", "content-security-policy")
+                return response.status_code, bytes(content), {k: response.headers[k] for k in allowed if k in response.headers}
+            finally:
+                response.close()
+        except Exception:
+            raise AnalysisError("MEMBERSHIP_UNAVAILABLE", "模拟支付页暂不可用，请稍后重新打开原订单；不要重复购买。", 503) from None
 
     def login(self, email, password):
         result = self.call("/login", {"email": email, "password": password})

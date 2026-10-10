@@ -1,6 +1,11 @@
 import html
+import hashlib
+import hmac
 import logging
+import re
+import secrets
 from typing import Literal
+from urllib.parse import parse_qs
 
 from fastapi import Depends, FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
@@ -12,6 +17,7 @@ from .config import load_config
 from .mail import delivery_mode
 from .provider import MockProvider, StripeProvider
 from .service import BillingError, MembershipService
+from .security import mock_checkout_path
 from .store import Store
 
 
@@ -186,27 +192,63 @@ def create_app(config=None, provider=None, clock=None):
         return "<!doctype html><html lang='zh-CN'><meta charset='utf-8'><meta name='robots' content='noindex,nofollow'><title>返回 SaveAny</title><body><h1>请返回本机 SaveAny</h1><p>在会员窗口点击“刷新会员状态”核实结果。返回此页不代表付款成功，会员以服务端确认结果为准。</p><p>若取消或付款失败，可继续打开原支付页；已付款时请勿再次购买。</p></body></html>"
 
     if config.provider == "mock":
+        form_secret = secrets.token_bytes(32)
+
+        def owned_mock_session(session_id, account):
+            try:
+                mock_checkout_path(session_id)
+            except ValueError:
+                raise BillingError("ORDER_NOT_FOUND", "模拟订单不存在。", 404) from None
+            with store.connection() as db:
+                order = db.execute("SELECT id FROM orders WHERE session_id=? AND user_id=?", (session_id, account["id"])).fetchone()
+            if not order:
+                raise BillingError("ORDER_NOT_FOUND", "模拟订单不存在。", 404)
+            return provider.session(session_id)
+
+        def form_token(session_id):
+            return hmac.new(form_secret, session_id.encode(), hashlib.sha256).hexdigest()
+
+        def mock_page(heading, message, extra=""):
+            return ("<!doctype html><html lang='zh-CN'><meta charset='utf-8'><title>模拟支付 · 无真实扣款</title>"
+                    f"<body><h1>{heading}</h1><p>{message}</p>{extra}<p><a href='/'>返回 SaveAny</a>"
+                    "，在会员窗口点击“刷新会员状态”核实订单。不会产生真实扣款。</p></body></html>")
+
         @app.get("/dev/checkout/{session_id}", response_class=HTMLResponse)
-        def mock_checkout(session_id: str):
-            value = provider.session(session_id)
+        def mock_checkout(session_id: str, account=Depends(user)):
+            value = owned_mock_session(session_id, account)
             safe_id = html.escape(session_id, quote=True)
             if value["status"] != "open":
-                return "<html lang='zh-CN'><meta charset='utf-8'><title>模拟支付</title><h1>模拟订单已处理或已过期</h1><p>请返回 SaveAny 刷新状态。不会产生真实扣款。</p></html>"
-            return f"<!doctype html><html lang='zh-CN'><meta charset='utf-8'><title>模拟支付 · 无真实扣款</title><body><h1>仅限本机模拟，不会扣款</h1><p>SaveAny 30 天会员 · ¥19.90 · 不自动续费</p><form method='post' action='/dev/checkout/{safe_id}'><button name='outcome' value='paid'>模拟付款成功</button><button name='outcome' value='declined'>模拟银行卡拒付</button></form></body></html>"
+                return mock_page("模拟订单已处理或已过期", "付款与会员权益以服务端核实结果为准。")
+            return mock_page("仅限本机模拟，不会扣款", "SaveAny 30 天会员 · ¥19.90 · 不自动续费",
+                f"<form method='post' action='/dev/checkout/{safe_id}'><input type='hidden' name='csrf' value='{form_token(session_id)}'>"
+                "<button name='outcome' value='paid'>模拟付款成功</button><button name='outcome' value='declined'>模拟银行卡拒付</button>"
+                "<button name='outcome' value='cancelled'>取消并返回</button></form>")
 
         @app.post("/dev/checkout/{session_id}", response_class=HTMLResponse)
-        async def mock_pay(session_id: str, request: Request):
-            if request.headers.get("origin") not in {None, config.public_url}:
+        async def mock_pay(session_id: str, request: Request, account=Depends(user)):
+            if request.headers.getlist("origin") != [config.public_url] or request.headers.get("sec-fetch-site") == "cross-site":
                 raise BillingError("ORIGIN_FORBIDDEN", "不允许该网页触发模拟付款。", 403)
-            body = (await request.body()).decode()
-            if body == "outcome=declined":
-                return "<html lang='zh-CN'><meta charset='utf-8'><h1>模拟拒付</h1><p>会员未开通。返回原支付页可再次模拟。</p></html>"
-            if body != "outcome=paid":
+            await run_in_threadpool(owned_mock_session, session_id, account)
+            if request.headers.get("content-type", "").split(";", 1)[0] != "application/x-www-form-urlencoded":
+                raise BillingError("OUTCOME_INVALID", "模拟结果不合法。")
+            try:
+                fields = parse_qs((await request.body()).decode("utf-8"), strict_parsing=True, max_num_fields=3)
+            except (ValueError, UnicodeError):
+                raise BillingError("OUTCOME_INVALID", "模拟结果不合法。") from None
+            if set(fields) != {"csrf", "outcome"} or any(len(value) != 1 for value in fields.values()):
+                raise BillingError("OUTCOME_INVALID", "模拟结果不合法。")
+            if not re.fullmatch(r"[0-9a-f]{64}", fields["csrf"][0]) or not hmac.compare_digest(fields["csrf"][0], form_token(session_id)):
+                raise BillingError("CSRF_FORBIDDEN", "模拟支付页已失效，请重新打开原订单。", 403)
+            outcome = fields["outcome"][0]
+            if outcome in {"declined", "cancelled"}:
+                return mock_page("模拟拒付" if outcome == "declined" else "已取消本次模拟付款",
+                    "此操作不会开通会员或撤销已有权益。原订单保留，可从会员窗口继续。")
+            if outcome != "paid":
                 raise BillingError("OUTCOME_INVALID", "模拟结果不合法。")
             value = await run_in_threadpool(provider.pay, session_id)
             payload, signature = provider.signed_event("checkout.session.completed", value)
             await run_in_threadpool(service.webhook, payload, signature)
-            return "<html lang='zh-CN'><meta charset='utf-8'><h1>模拟付款已处理</h1><p>没有真实扣款，请返回 SaveAny 刷新会员状态。</p></html>"
+            return mock_page("模拟付款已处理", "没有真实扣款，会员以服务端核实结果为准。")
 
     return app
 

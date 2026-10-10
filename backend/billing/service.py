@@ -5,7 +5,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from . import mail
-from .security import digest, password_hash, password_matches, token
+from .security import digest, mock_checkout_path, password_hash, password_matches, token
 
 
 class BillingError(Exception):
@@ -225,15 +225,20 @@ class MembershipService:
 
     def safe_checkout_url(self, url):
         from urllib.parse import urlsplit
+        if self.config.provider == "mock":
+            return isinstance(url, str) and re.fullmatch(r"/dev/checkout/cs_test_mock_[A-Za-z0-9_-]{32}", url) is not None
         parsed = urlsplit(url)
         if parsed.username or parsed.password:
             return False
-        if self.config.provider == "mock":
-            return url.startswith(self.config.public_url + "/dev/checkout/")
         return parsed.scheme == "https" and parsed.hostname == "checkout.stripe.com"
 
     def public_order(self, order):
-        return {"id": order["id"], "status": order["status"], "checkout_url": order["checkout_url"] if order["status"] == "open" else None, "simulated": self.config.provider == "mock"}
+        url = order["checkout_url"] if order["status"] == "open" else None
+        if url and self.config.provider == "mock":
+            # Old pending orders can contain an internal absolute URL. Render the
+            # same saved session as a path without migrating or recreating it.
+            url = mock_checkout_path(order["session_id"])
+        return {"id": order["id"], "status": order["status"], "checkout_url": url, "simulated": self.config.provider == "mock"}
 
     def refresh(self, user):
         with self.store.connection() as db:

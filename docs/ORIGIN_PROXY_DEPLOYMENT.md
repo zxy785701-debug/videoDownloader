@@ -89,7 +89,7 @@ location ^~ /api/ {
 
 若 Uvicorn 需要代理头处理 HTTPS 重定向／客户端信息，限定可信代理：`--proxy-headers --forwarded-allow-ips=127.0.0.1`，不要设成 `*`，也不因此把 8000 改为公网监听。来源检查和 Cookie 配置不依赖这些参数。
 
-Nginx 只接受明确的 `server_name`，未知 Host 由独立默认站点拒绝。**不能反代 8010 到公网**，也不公开会员 `/api/membership/v1/` 或 `/dev/checkout/`。静态根目录用 `frontend/dist`，不要暴露含 `.env`／数据库／`.git` 的仓库根目录。若确需测试独立 Mock 付款页，只能另加本地 SSH 隧道，不能增加公网 location。
+Nginx 只接受明确的 `server_name`，未知 Host 由独立默认站点拒绝。**不能反代 8010 到公网**，也不公开会员 `/api/membership/v1/`。静态根目录用 `frontend/dist`，不要暴露含 `.env`／数据库／`.git` 的仓库根目录。开发环境的 Mock 同源付款页现可经 8000 的登录保护路由访问，仅为服务器回环连接增加 `/dev/checkout/` location；配置与限制见 [Mock SSH 隧道修复](MOCK_CHECKOUT_SSH.md)。不要直接将该路径反代到 8010，或向公网启用它。
 
 ## 缺失 Origin 与安全边界
 

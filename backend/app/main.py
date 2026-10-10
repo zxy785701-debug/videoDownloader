@@ -16,7 +16,7 @@ from .access_policy import install_access_policy, load_access_policy
 from .analysis_errors import AnalysisError
 from .analysis_jobs import close_engine, get_engine
 from .analysis_routes import router as analysis_router
-from .membership_routes import router as membership_router
+from .membership_routes import mock_checkout_router, router as membership_router
 from .membership_client import close_membership_client
 from .schemas import DownloadCreated, DownloadRequest, DownloadStatus, ParseRequest, ParseResponse
 
@@ -54,6 +54,7 @@ async def local_validation_handler(request, error):
 
 app.include_router(analysis_router)
 app.include_router(membership_router)
+app.include_router(mock_checkout_router)
 
 
 @app.get("/api/v1/health")

@@ -7,6 +7,8 @@ import time
 
 import stripe
 
+from .security import mock_checkout_path
+
 
 class StripeProvider:
     def __init__(self, config):
@@ -53,13 +55,15 @@ class MockProvider:
             if prior:
                 if prior["params"] != serialized:
                     raise ValueError("Mock idempotency parameter conflict")
-                return json.loads(prior["data"])
+                result = json.loads(prior["data"])
+                result["url"] = mock_checkout_path(result["id"])
+                return result
             session_id = "cs_test_mock_" + secrets.token_urlsafe(24)
             result = {"id": session_id, "mode": "payment", "livemode": False, "status": "open", "payment_status": "unpaid",
                       "currency": "cny", "amount_total": 1990, "metadata": params["metadata"], "client_reference_id": params["client_reference_id"],
                       "expires_at": params["expires_at"], "payment_intent": None,
                       "line_items": {"has_more": False, "data": [{"quantity": 1, "price": self.price()}]},
-                      "url": self.config.public_url + "/dev/checkout/" + session_id}
+                      "url": mock_checkout_path(session_id)}
             db.execute("INSERT INTO mock_sessions VALUES (?,?,?,?)", (session_id, key, serialized, json.dumps(result)))
             return result
 
@@ -69,6 +73,7 @@ class MockProvider:
         if not row:
             raise ValueError("Unknown mock session")
         result = json.loads(row["data"])
+        result["url"] = mock_checkout_path(result["id"])
         if result["status"] == "open" and result["expires_at"] <= self.clock():
             result["status"] = "expired"
         return result

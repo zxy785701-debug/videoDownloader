@@ -11,4 +11,4 @@ if not DIRECTORY.is_relative_to(ROOT / ".local"):
     raise RuntimeError("Test data must stay under .local")
 app = create_app(Config(provider="mock", database=DIRECTORY / "billing.sqlite3", mail_directory=DIRECTORY / "mail",
                         require_email_verification=os.environ.get("MEMBERSHIP_TEST_VERIFY_EMAIL") == "1",
-                        public_url=os.environ.get("MEMBERSHIP_TEST_SERVICE_URL", "http://127.0.0.1:8190")))
+                        public_url=os.environ.get("MEMBERSHIP_TEST_APP_URL", "http://127.0.0.1:8187")))

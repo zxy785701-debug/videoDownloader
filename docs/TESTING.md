@@ -2,7 +2,9 @@
 
 更新日期：2026-10-10。工作区完整验证见 [同屏验收报告](UNIFIED_VIDEO_WORKSPACE_TEST_REPORT.md)，最新公开页面扩展见 [SEO／GEO 验证](SEO_GEO_TEST_REPORT.md)。以下命令从仓库根目录执行，测试与正式本机服务使用不同端口和数据库。
 
-ASR 音频备用地址修复后的最新完整后端回归为 **561 passed、1 skipped，132.03 秒**；跳过项为显式启用的真实云测试。新增 21 项离线回归，并对用户指定 `BV1N2pc6gErK` 真实完成匿名音频提取及 FFmpeg 转换，没有调用 OSS、付费 ASR 或 LLM；证据与生产更新步骤见 [CDN 备用地址修复报告](ASR_CDN_FALLBACK_FIX.md)。前端产品构建在 ASR 开发阶段已通过，本次没有修改或重建前端。
+Mock 同源支付修复后的最新完整后端回归为 **585 passed、1 skipped，124.60 秒**，3 条既有依赖弃用提示；跳过项为显式启用的真实云测试。新增 24 项后端回归，相关账号/来源/支付专项 **172 passed**；真实本机三层 HTTP 代理与 Edge 浏览器 **32 项通过**，前端 TypeScript/Vite 构建通过。没有真实付款或阿里云 Nginx/SSH 验收，配置、修改文件及部署步骤见 [Mock SSH 修复报告](MOCK_CHECKOUT_SSH.md)。
+
+此前 ASR 音频备用地址修复时完整后端为 **561 passed、1 skipped，132.03 秒**，并对用户指定 `BV1N2pc6gErK` 真实完成匿名音频提取及 FFmpeg 转换，没有调用 OSS、付费 ASR 或 LLM；证据与生产更新步骤见 [CDN 备用地址修复报告](ASR_CDN_FALLBACK_FIX.md)。
 
 用户于 2026-10-10 完成首次真实 20 秒 OSS/Paraformer-v2 验收，随后完成指定 B 站视频的登录/匿名两组真实验收：登录组 45 条原生字幕、ASR 0；匿名组实际字幕权限失败后自动进入 ASR，提交 1 次、查询 2 次、返回 11 条字幕，并通过真实总结、问答、导图及导出检查。旧账本保留，复测没有重复付费，实际账单未核对。完整证据、耗时、内存及未覆盖范围见 [B 站端到端报告](BILIBILI_ASR_E2E_REPORT.md)、[ASR 测试报告](ASR_TEST_REPORT.md) 与 [ASR 配置](ASR_FALLBACK.md)。未部署生产；其他平台真实下载和完整视频交付不属于本次真实验收。下方旧结果保留作为历史记录。
 
@@ -41,7 +43,7 @@ $env:ALLOWED_HOSTS = '127.0.0.1,localhost'
 $env:ACCOUNT_COOKIE_SECURE = 'false'
 ```
 
-如用 `localhost` 或 `LEARNING_TEST_URL`／`MEMBERSHIP_TEST_APP_URL` 指定其他地址，添加其完整 Origin。独立会员 Mock fixture 的来源规则保持不变；以上仅配置主服务 fixture。
+如用 `localhost` 或 `LEARNING_TEST_URL`／`MEMBERSHIP_TEST_APP_URL` 指定其他地址，添加其完整 Origin。两个会员 fixture 终端须共用 `MEMBERSHIP_TEST_APP_URL`，独立 Mock 服务会以它校验表单 Origin；该网站地址与 `MEMBERSHIP_TEST_SERVICE_URL` 内部服务地址不同。完整代理拓扑见 [Mock SSH 修复报告](MOCK_CHECKOUT_SSH.md)。
 
 | 终端服务 | 对应脚本 |
 | --- | --- |
