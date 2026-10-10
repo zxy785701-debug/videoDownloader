@@ -195,6 +195,8 @@ $env:ALIYUN_OSS_ENDPOINT = 'https://oss-cn-beijing.aliyuncs.com'
 
 测试不需要新增 `ListObjects` 或 `GetObjectAcl` 权限，不会修改 Bucket ACL、Policy 或生命周期。删除失败会将任务保留为待清理，不会将识别成功误报为全部检查成功；生命周期 1 天规则仍是异常兜底。
 
+B 站视频信息正常但提示“音频与识别结果必须使用公开 HTTPS 地址”时，也可能是平台音轨首选地址使用了 `8082` 或 `4483` 非标准端口。ASR 提取器现会使用同一音轨已有的标准 HTTPS 备用地址，不放开内网或非标准端口访问。修复、真实音频提取证据及无需主服务重启的更新方式见 [CDN 备用地址修复报告](ASR_CDN_FALLBACK_FIX.md)。
+
 ### 真实 B 站端到端验收
 
 已完成用户指定 `BV1HnSVY6Eho` 的登录/匿名两组真实验收：原生字幕不调用 ASR；匿名权限错误自动兜底，并验证 OSS、云端字幕、总结、问答、导图与导出。耗时、内存、费用和范围见 [B 站端到端报告](BILIBILI_ASR_E2E_REPORT.md)。未部署宝塔。

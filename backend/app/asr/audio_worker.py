@@ -1,4 +1,6 @@
 """Short-lived media process. stdout/stderr are suppressed by the supervisor."""
+import errno
+import http.client
 import json
 import math
 import re
@@ -22,16 +24,72 @@ def positive_duration(value, maximum):
     return float(value)
 
 
+MAX_MEDIA_CANDIDATES = 4
+
+
+def media_candidates(media):
+    """Use the same track's platform backups without relaxing download policy.
+
+    Bilibili can prefer peer/CDN URLs on 8082/4483 while returning a standard
+    HTTPS backup for the identical audio track. Keep queries byte-for-byte;
+    changing a signed URL's scheme, port or path can invalidate its signature.
+    DNS/public-address checks still happen in download() for every request.
+    """
+    backups = media.get("_platform_backup_urls") or []
+    values = [media.get("url"), *(backups if isinstance(backups, (list, tuple)) else [])]
+    candidates = []
+    for url in values:
+        if not isinstance(url, str) or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in url):
+            continue
+        try:
+            parsed = urlsplit(url)
+            if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
+                    or parsed.port not in {None, 443}):
+                continue
+        except ValueError:
+            continue
+        if url not in candidates:
+            candidates.append(url)
+            if len(candidates) >= MAX_MEDIA_CANDIDATES:
+                break
+    return candidates
+
+
 def select_media(info):
     formats = info.get("formats") or [info]
-    direct = [f for f in formats if isinstance(f, dict) and isinstance(f.get("url"), str)
-              and f["url"].startswith("https://") and f.get("protocol", "https") in {"http", "https"}
+    direct = [f for f in formats if isinstance(f, dict) and media_candidates(f)
+              and f.get("protocol", "https") in {"http", "https"}
               and not f.get("has_drm") and f.get("acodec") != "none"]
     if not direct:
         raise AnalysisError("ASR_AUDIO_UNAVAILABLE", "没有可安全提取的音频直链；当前 ASR 暂不支持仅有 HLS/DASH 清单的视频。")
     # Audio-only first, then the smallest progressive video as a bounded fallback.
     return min(direct, key=lambda f: (f.get("vcodec") != "none", f.get("abr") or f.get("tbr") or 99999,
                                       f.get("height") or 0))
+
+
+def download_media(media, destination, limit, check, headers):
+    candidates = media_candidates(media)
+    if not candidates:
+        raise AnalysisError("ASR_AUDIO_UNAVAILABLE", "平台未提供可安全访问的标准 HTTPS 音频地址。")
+    last_error = None
+    for url in candidates:
+        check()
+        try:
+            download(url, destination, limit, check, headers)
+            return
+        except AnalysisError as error:
+            # Unsafe DNS/redirects, cancellation, deadlines and size limits must
+            # stop the task; only an unavailable resource may try a backup.
+            if error.code != "ASR_RESOURCE_FAILED":
+                raise
+            last_error = error
+        except (OSError, http.client.HTTPException) as error:
+            if isinstance(error, PermissionError) or (isinstance(error, OSError)
+                    and error.errno in {errno.ENOSPC, errno.EROFS, errno.EDQUOT}):
+                raise AnalysisError("ASR_TEMP_UNAVAILABLE", "临时音频无法写入，请管理员检查磁盘空间和目录权限。") from error
+            last_error = AnalysisError("ASR_RESOURCE_FAILED", "音频下载连接失败，平台备用地址也不可用，请稍后重试。")
+        destination.unlink(missing_ok=True)
+    raise last_error
 
 
 def prepare(request, directory):
@@ -67,8 +125,8 @@ def prepare(request, directory):
     duration = positive_duration(info.get("duration"), request["max_duration"])
     raw = directory / "source.media"
     check()
-    download(selected["url"], raw, request["max_download_bytes"], check,
-             {**(info.get("http_headers") or {}), **(selected.get("http_headers") or {})})
+    download_media(selected, raw, request["max_download_bytes"], check,
+                   {**(info.get("http_headers") or {}), **(selected.get("http_headers") or {})})
     check()
     ffmpeg = video_service._ffmpeg_location()
     if not ffmpeg:
