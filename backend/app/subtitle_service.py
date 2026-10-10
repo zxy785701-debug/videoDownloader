@@ -338,6 +338,8 @@ def extract_transcript(url: str, requested_language: str = "auto", config: AICon
     source_id = str(info.get("id") or "")
     if platform == "Bilibili":
         source_id += ":p" + parse_qs(urlsplit(safe_url).query).get("p", ["1"])[0]
+    for cue in cues:
+        cue.update(source="native_subtitle", provider=platform.lower())
     return {
         "title": str(info.get("title") or "未命名视频"), "duration": duration, "source_id": source_id,
         "language": selected["language"], "track_kind": selected["kind"],

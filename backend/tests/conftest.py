@@ -15,6 +15,8 @@ def isolated_learning_runtime(tmp_path, monkeypatch):
     monkeypatch.setenv("VIDEO_LEARNING_DB", str(tmp_path / "test-runtime.sqlite3"))
     monkeypatch.setattr(ai_config, "_LOCAL_CONFIG", {})
     monkeypatch.setenv("MEMBERSHIP_SERVICE_URL", "")
+    # Existing regression tests remain caption-only; ASR tests explicitly opt in.
+    monkeypatch.setenv("ASR_ENABLED", "false")
     monkeypatch.delenv("BILIBILI_METADATA_SOURCE", raising=False)
     monkeypatch.setattr(membership_client, "_client", None)
     close_engine()

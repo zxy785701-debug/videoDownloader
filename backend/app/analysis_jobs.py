@@ -1,4 +1,5 @@
 import logging
+import hashlib
 import secrets
 import sqlite3
 import threading
@@ -12,6 +13,7 @@ from .analysis_errors import AnalysisError, JobStopped
 from .analysis_store import AnalysisStore
 from .deepseek_client import DeepSeekClient, DeepSeekHTTPPool
 from .membership_client import get_membership_client
+from .asr.service import ASRService
 
 logger = logging.getLogger(__name__)
 
@@ -21,14 +23,15 @@ def identifier() -> str:
 
 
 class AnalysisEngine:
-    def __init__(self, store: AnalysisStore, workers: int = 2):
+    def __init__(self, store: AnalysisStore, workers: int = 1):
         self.store = store
         self.store.recover()
+        self.asr = ASRService(store.path.parent)
         self.membership = get_membership_client()
         if self.membership:
             self.membership.recover(self.store)
         self.lock = threading.RLock()
-        self.slots = threading.BoundedSemaphore(workers + 10)
+        self.slots = threading.BoundedSemaphore(max(12, workers + 10))
         self.executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="video-learning")
         self.futures = {}
         self.closed = False
@@ -109,7 +112,7 @@ class AnalysisEngine:
                 if message_id:
                     self.chat_streams.pop(message_id, None)
 
-    def start_transcript(self, url: str, language: str, auto_summary: bool = False, member_session: str | None = None) -> dict:
+    def start_transcript(self, url: str, language: str, auto_summary: bool = False, member_session: str | None = None, asr_user: str = "local") -> dict:
         platform, safe_url = subtitle_service.platform_url(url)
         with self.lock:
             record = self.store.find(safe_url, language)
@@ -137,14 +140,29 @@ class AnalysisEngine:
                 self.slots.release()
                 raise
             def action():
-                result = subtitle_service.extract_transcript(
+                result = self.asr.extract(
                     safe_url, language,
-                    on_metadata=lambda meta: self._metadata(job_id, record_id, meta),
+                    metadata=lambda meta: self._metadata(job_id, record_id, meta),
+                    user_key=lambda: self._asr_user(asr_user, member_session), check=lambda: self.check(job_id),
+                    stage=lambda text: self.store.set_job(job_id, "processing", text),
                 )
                 self.check(job_id)
                 self.store.save_transcript(record_id, result)
             self._schedule(job_id, record_id, "subtitle", action)
             return {"id": record_id, "job_id": job_id, "cached": False}
+
+    def _asr_user(self, peer_key, member_session):
+        # Only paid fallback resolves account identity. Native captions remain
+        # independent of membership. Invalid sessions share the peer limit.
+        if self.membership and member_session:
+            try:
+                account = self.membership.me(member_session)
+                email = account.get("email")
+                if isinstance(email, str) and email:
+                    return hashlib.sha256(("account:" + email.strip().casefold()).encode()).hexdigest()
+            except AnalysisError:
+                pass
+        return peer_key
 
     def _request_auto_summary(self, record_id: str, member_session: str | None = None):
         """Persist one opt-in continuation using the existing job schema."""

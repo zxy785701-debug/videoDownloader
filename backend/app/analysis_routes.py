@@ -1,4 +1,5 @@
 import re
+import hashlib
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -28,7 +29,11 @@ def ai_config():
 
 @router.post("/analyses", status_code=202)
 def create_analysis(body: AnalysisCreate, request: Request):
-    return get_engine().start_transcript(body.url, body.language, body.auto_summary, request.cookies.get(COOKIE))
+    # This route never reads forwarded headers or trusts an unverified cookie.
+    # The ASGI server controls proxy trust; see deployment instructions.
+    peer = request.client.host if request.client else "local"
+    user_key = hashlib.sha256(peer.encode()).hexdigest()
+    return get_engine().start_transcript(body.url, body.language, body.auto_summary, request.cookies.get(COOKIE), user_key)
 
 
 @router.get("/analyses")

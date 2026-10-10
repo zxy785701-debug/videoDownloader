@@ -1,0 +1,3 @@
+# Optional lightweight cloud-storage dependencies; no local ASR model.
+oss2>=2.19,<3
+alibabacloud-credentials>=0.3,<2

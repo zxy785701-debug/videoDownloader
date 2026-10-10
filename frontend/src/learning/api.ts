@@ -27,5 +27,5 @@ export function clock(seconds: number) {
 }
 
 export function sourceKind(kind: string | null) {
-  return ({ manual: '人工字幕', automatic: '自动字幕', unknown: '平台字幕（类型未标明）' } as Record<string, string>)[kind || ''] || '尚未获取'
+  return ({ manual: '人工字幕', automatic: '自动字幕', unknown: '平台字幕（类型未标明）', asr: '云端语音转录' } as Record<string, string>)[kind || ''] || '尚未获取'
 }

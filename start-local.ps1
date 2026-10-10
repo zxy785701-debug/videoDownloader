@@ -54,7 +54,14 @@ try {
     Write-Host "Open http://127.0.0.1:$Port to use the website. No separate frontend process is required."
     Write-Host 'Close the selected browser if its cookie database is locked. Ctrl+C stops the API.'
     if ($env:DEEPSEEK_API_KEY) { Write-Host 'DeepSeek is configured for this process. Open AI Learning to summarize available captions.' }
-    else { Write-Host 'No process API key set. Backend will also check project-root .env; see AI Learning for configuration status.' }
+    else { Write-Host 'No DeepSeek summary key set in the process. Backend also checks DEEPSEEK_API_KEY in project-root .env; this message does not refer to the Bailian ASR key.' }
+    if ($env:ASR_ENABLED -in @('0', 'false')) {
+        Write-Host 'Cloud ASR fallback is disabled by ASR_ENABLED.'
+    } elseif ($env:DASHSCOPE_API_KEY) {
+        Write-Host 'Bailian/DashScope ASR key is present in the process environment (not cloud-validated). Private OSS bucket and credentials are also required; see docs/ASR_FALLBACK.md.'
+    } else {
+        Write-Host 'Cloud ASR fallback needs DASHSCOPE_API_KEY in the process environment and private OSS configuration. ASR does not read project-root .env; see docs/ASR_FALLBACK.md.'
+    }
     if ($env:VIDEO_LEARNING_FIREFOX_SESSION -in @('1', 'true')) { Write-Host 'Firefox session is explicitly enabled for Bilibili/Douyin captions only.' }
     & $pythonPath -m uvicorn app.main:app --app-dir (Join-Path $PSScriptRoot 'backend') --host 127.0.0.1 --port $Port
     if ($LASTEXITCODE -ne 0) { throw "API exited with code $LASTEXITCODE" }

@@ -1,4 +1,4 @@
-export interface Cue { id: string; start: number; end: number; text: string }
+export interface Cue { id: string; start: number; end: number; text: string; source?: 'native_subtitle' | 'asr'; provider?: string }
 export interface Reference { cue_id: string; start: number; end: number; text: string }
 export interface Track { language: string; kind: string }
 export interface Job { id: string; kind: string; status: string; stage: string; error: string | null; error_code: string | null }

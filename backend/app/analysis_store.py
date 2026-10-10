@@ -82,6 +82,12 @@ class AnalysisStore:
                 );
                 PRAGMA user_version=1;
             """)
+            # Additive migration; existing cues and API fields keep their values.
+            columns = {row[1] for row in db.execute("PRAGMA table_info(cues)")}
+            if "source" not in columns:
+                db.execute("ALTER TABLE cues ADD COLUMN source TEXT NOT NULL DEFAULT 'native_subtitle'")
+            if "provider" not in columns:
+                db.execute("ALTER TABLE cues ADD COLUMN provider TEXT NOT NULL DEFAULT 'platform'")
 
     @contextmanager
     def connection(self):
@@ -155,8 +161,8 @@ class AnalysisStore:
                 return
             db.execute("DELETE FROM cues WHERE analysis_id=?", (record_id,))
             db.executemany(
-                "INSERT INTO cues(analysis_id,id,position,start,end,text) VALUES(?,?,?,?,?,?)",
-                [(record_id, c["id"], i, c["start"], c["end"], c["text"]) for i, c in enumerate(result["cues"])],
+                "INSERT INTO cues(analysis_id,id,position,start,end,text,source,provider) VALUES(?,?,?,?,?,?,?,?)",
+                [(record_id, c["id"], i, c["start"], c["end"], c["text"], c.get("source", "native_subtitle"), c.get("provider", "platform")) for i, c in enumerate(result["cues"])],
             )
             db.execute(
                 "UPDATE analyses SET " + ",".join(k + "=?" for k in fields) +
@@ -167,7 +173,7 @@ class AnalysisStore:
     def cues(self, record_id: str) -> list[dict]:
         with self.connection() as db:
             rows = db.execute(
-                "SELECT id,start,end,text FROM cues WHERE analysis_id=? ORDER BY position", (record_id,)
+                "SELECT id,start,end,text,source,provider FROM cues WHERE analysis_id=? ORDER BY position", (record_id,)
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -185,7 +191,7 @@ class AnalysisStore:
                 args.append("%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%")
             total = db.execute("SELECT COUNT(*) FROM cues WHERE " + clause, args).fetchone()[0]
             rows = db.execute(
-                "SELECT id,start,end,text FROM cues WHERE " + clause + " ORDER BY position LIMIT ? OFFSET ?",
+                "SELECT id,start,end,text,source,provider FROM cues WHERE " + clause + " ORDER BY position LIMIT ? OFFSET ?",
                 (*args, limit, offset),
             ).fetchall()
         return {"items": [dict(row) for row in rows], "total": total, "offset": offset, "limit": limit}
